@@ -10,7 +10,11 @@
  */
 
 import { db } from "@greetings/db";
-import { content, contentAssets } from "@greetings/db/schema";
+import {
+	content,
+	contentAssets,
+	downloadIdempotency,
+} from "@greetings/db/schema";
 import { and, eq, inArray, lt } from "drizzle-orm";
 import type { ObjectStorage } from "../lib/storage";
 
@@ -77,4 +81,31 @@ export async function cleanupOrphanDrafts(
 		.returning({ id: content.id });
 
 	return { draftsDeleted: deleted.length, objectsDeleted, objectsFailed };
+}
+
+/**
+ * Discards idempotency records that can no longer suppress anything.
+ *
+ * A row only matters inside the replay window (60 seconds). Keeping them
+ * forever would grow the table by one row per download, which at this
+ * product's expected volume is the fastest-growing table in the system after
+ * the events themselves.
+ *
+ * Retained for an hour rather than exactly 60 seconds so the table doubles as
+ * a short diagnostic trail when investigating a client's retry behaviour.
+ */
+export async function purgeExpiredIdempotencyKeys(
+	options: { retainMinutes?: number; now?: Date } = {},
+): Promise<{ purged: number }> {
+	const retainMinutes = options.retainMinutes ?? 60;
+	const cutoff = new Date(
+		(options.now ?? new Date()).getTime() - retainMinutes * 60 * 1000,
+	);
+
+	const deleted = await db
+		.delete(downloadIdempotency)
+		.where(lt(downloadIdempotency.createdAt, cutoff))
+		.returning({ id: downloadIdempotency.id });
+
+	return { purged: deleted.length };
 }

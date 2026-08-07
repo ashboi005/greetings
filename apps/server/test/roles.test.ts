@@ -89,6 +89,11 @@ const ENDPOINTS: GuardedEndpoint[] = [
 		allowed: ALL_ROLES,
 		call: (token) => api.get("/v1/search?q=test", { token }),
 	},
+	{
+		name: "POST /v1/content/:id/download",
+		allowed: ALL_ROLES,
+		call: (token) => api.post("/v1/content/nope/download", { token, body: {} }),
+	},
 
 	// --- Designer content (M3) ---
 	{

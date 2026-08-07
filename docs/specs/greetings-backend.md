@@ -460,6 +460,30 @@ Measured plans at 20k rows: the feed page uses `content_feed_idx` (index scan, 0
 and trigram predicates fall back to sequential scans only when a query matches a large fraction of
 the table, which is the planner making the right call rather than a missing index.
 
+## 14e. Constraints discovered while building M5
+
+**Idempotency is claimed in one statement, not read-then-write.** The realistic failure is a flaky
+mobile connection firing the same request several times before any response arrives, so a check
+followed by an insert would let two of them through. The claim is a single upsert whose `setWhere`
+only refreshes a row that has aged past the replay window; *no rows returned* is then an exact
+answer to "someone already claimed this". A test fires eight concurrent identical requests and
+asserts exactly one download is recorded.
+
+**Download is a POST, not a GET.** It has a side effect, and browsers, proxies and link previewers
+prefetch GETs freely — which would inflate the very numbers designers are measured on.
+
+**The counter is incremented in SQL** (`download_count = download_count + 1`), never read-modify-
+write. A test runs ten concurrent downloads and asserts the counter equals the event count; the
+naive version loses increments.
+
+**`languageCode` on a download event is the content's language, not the user's.** A user may prefer
+several, and the question analytics needs to answer is which content travels — not what the reader
+speaks. `regionCode` is the opposite: it comes from the user's profile, frozen at event time.
+
+**Idempotency records are purged on a schedule.** One row per download would otherwise make this the
+second fastest-growing table in the system. They are kept an hour — far longer than the 60-second
+replay window — so they double as a short trail when diagnosing a client's retry behaviour.
+
 ---
 
 ## 15. Milestones
@@ -471,7 +495,7 @@ the table, which is the planner making the right call rather than a missing inde
 | **M2** | Roles, Firebase exchange, `requireRole`, role invites, onboarding, region/language seeds | A Firebase token yields a session; a `user` is rejected from designer routes — **done** |
 | **M3** | Tags, R2 upload, lifecycle state machine, admin review | A designer takes an image from draft to published via admin approval — **done** |
 | **M4** | Feed scoring, stable cursor, search indexes | Two users in different regions get different feeds; paging has no gaps — **done** |
-| **M5** | Tracked downloads, idempotency, signed URLs | A download is attributed to the right designer and region |
+| **M5** | Tracked downloads, idempotency, signed URLs | A download is attributed to the right designer and region — **done** |
 | **M6** | Reports, auto-hold threshold, admin resolution | 5 reports pull an item from the feed |
 | **M7** | Analytics endpoints, nightly rollup job | Rollup totals equal a live aggregation |
 | **M8** | Rate limits, production Dockerfiles, seed data, OpenAPI handoff review | Full end-to-end walkthrough passes |

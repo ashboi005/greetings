@@ -6,6 +6,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 import { content } from "./content";
@@ -58,6 +59,41 @@ export const downloadEvents = pgTable(
 		index("download_events_content_idx").on(table.contentId, table.createdAt),
 		index("download_events_region_idx").on(table.regionCode, table.createdAt),
 		index("download_events_created_at_idx").on(table.createdAt),
+	],
+);
+
+/**
+ * Idempotency records for downloads (spec §8).
+ *
+ * Mobile networks drop responses, and a client that retries must not have the
+ * download counted twice — these numbers are what designers are paid on. The
+ * client sends an `Idempotency-Key`; a repeat within the replay window returns
+ * the stored URL and records nothing.
+ *
+ * Keyed on (userId, key) rather than the key alone, so one client's key can
+ * never collide with another's.
+ */
+export const downloadIdempotency = pgTable(
+	"download_idempotency",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		key: text("key").notNull(),
+		contentId: text("content_id")
+			.notNull()
+			.references(() => content.id, { onDelete: "cascade" }),
+		signedUrl: text("signed_url").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [
+		uniqueIndex("download_idempotency_user_key_idx").on(
+			table.userId,
+			table.key,
+		),
+		// Lets the cleanup job find expired records without a scan.
+		index("download_idempotency_created_at_idx").on(table.createdAt),
 	],
 );
 

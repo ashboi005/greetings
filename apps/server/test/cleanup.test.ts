@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { content, contentAssets } from "@greetings/db/schema";
+import {
+	content,
+	contentAssets,
+	downloadIdempotency,
+} from "@greetings/db/schema";
 import { eq } from "drizzle-orm";
 import { createApp } from "../src/app";
-import { cleanupOrphanDrafts } from "../src/jobs/cleanup-orphan-drafts";
+import {
+	cleanupOrphanDrafts,
+	purgeExpiredIdempotencyKeys,
+} from "../src/jobs/cleanup-orphan-drafts";
 import { testDb, truncateAll } from "./db";
 import { fakeObjectStorage, fakeTokenVerifier } from "./fakes";
 import { authHelper, client, seedReference } from "./helpers";
@@ -157,5 +164,48 @@ describe("orphan draft cleanup", () => {
 			objectsDeleted: 0,
 			objectsFailed: 0,
 		});
+	});
+});
+
+describe("idempotency key purge", () => {
+	/** Writes an idempotency record directly, at a chosen age. */
+	async function storedKey(
+		userId: string,
+		contentId: string,
+		ageMinutes: number,
+	) {
+		const id = crypto.randomUUID();
+		await testDb.insert(downloadIdempotency).values({
+			id,
+			userId,
+			key: `key-${id}`,
+			contentId,
+			signedUrl: "https://example.test/signed",
+			createdAt: new Date(Date.now() - ageMinutes * 60 * 1000),
+		});
+		return id;
+	}
+
+	test("removes records past the retention window and keeps recent ones", async () => {
+		const designer = await auth.signIn({ role: "designer" });
+		const created = await api.post("/v1/designer/content", {
+			token: designer.token,
+			body: { title: "Anything", primaryLanguage: "hi" },
+		});
+		const contentId = created.body.id as string;
+
+		const old = await storedKey(designer.userId, contentId, 120);
+		const recent = await storedKey(designer.userId, contentId, 5);
+
+		const result = await purgeExpiredIdempotencyKeys();
+		expect(result.purged).toBe(1);
+
+		const remaining = await testDb.select().from(downloadIdempotency);
+		expect(remaining.map((r) => r.id)).toEqual([recent]);
+		void old;
+	});
+
+	test("does nothing when every record is fresh", async () => {
+		expect(await purgeExpiredIdempotencyKeys()).toEqual({ purged: 0 });
 	});
 });
