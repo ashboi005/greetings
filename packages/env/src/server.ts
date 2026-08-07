@@ -25,6 +25,15 @@ export const env = createEnv({
 
 		// Email granted super_admin by `bun run seed:super-admin`.
 		SUPER_ADMIN_EMAIL: z.email().optional(),
+
+		// --- Cloudflare R2 (spec §6) ---
+		// Optional as a group, for the same reason as the auth providers: the
+		// server boots without them, and upload endpoints report the gap. All
+		// four are needed together.
+		R2_ACCOUNT_ID: z.string().min(1).optional(),
+		R2_ACCESS_KEY_ID: z.string().min(1).optional(),
+		R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+		R2_BUCKET: z.string().min(1).optional(),
 		NODE_ENV: z
 			.enum(["development", "production", "test"])
 			.default("development"),

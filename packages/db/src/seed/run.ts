@@ -20,7 +20,7 @@ const { seedReferenceData, seedSuperAdmin } = await import("./index");
 
 const counts = await seedReferenceData();
 console.log(
-	`Seeded ${counts.regions} regions and ${counts.languages} languages.`,
+	`Seeded ${counts.regions} regions, ${counts.languages} languages and ${counts.tags} tags.`,
 );
 
 if (env.SUPER_ADMIN_EMAIL) {

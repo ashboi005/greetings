@@ -333,7 +333,7 @@ Found while verifying the generated project. Each is addressed in the milestone 
 | ~~Server port hardcoded to `3000`~~ — now `PORT` in `packages/env` | done (M1) |
 | ~~No OpenAPI plugin installed~~ — `@elysiajs/openapi` at `/docs` | done (M1) |
 | ~~`emailAndPassword` enabled in `packages/auth/src/index.ts`~~ — disabled | done (M2) |
-| `packages/db/src/schema/` still lacks the content and analytics tables | M3–M7 |
+| `packages/db/src/schema/` still lacks the analytics tables | M5, M7 |
 
 ---
 
@@ -407,6 +407,32 @@ violations to `409 CONFLICT` must walk that chain, or the violation surfaces as 
 **`role` carries `input: false` in the Better Auth config.** Without it, a sign-up payload could
 name its own role. This is the security boundary of the entire role system.
 
+## 14c. Constraints discovered while building M3
+
+**`t.Optional(t.UnionEnum([...]))` is not optional.** When the parameter is absent it resolves to
+the *first* value in the list rather than `undefined`. A `status` or `category` filter written that
+way silently filters every listing to one value, which reads as a short result rather than an error
+— `GET /v1/tags` returned only festivals, and `GET /v1/designer/content` only drafts. Use
+`optionalEnum()` from `apps/server/src/lib/schema.ts`, which wraps `t.String({ enum })` and keeps
+the narrow static type via `t.Unsafe`. Required enum fields are unaffected.
+
+The lesson generalises: a test that asserts *"everything returned matches the filter"* passes
+happily when the filter is stuck on. Assert the set of values actually present instead.
+
+**Trust the object, not the client.** The upload flow takes a declared size and MIME type when
+issuing a presigned URL, but records what R2 reports once the object lands — the two can differ, and
+only the storage layer knows the truth. Confirmation also checks the key is prefixed
+`content/<id>/`, without which a designer could attach another designer's object to their own post.
+
+**Delete objects before rows.** The orphan-draft job removes R2 objects first and only then the
+rows. The storage key exists solely on the row, so deleting the row first would leak the object
+permanently. When a delete fails, the row is deliberately kept so the next run retries.
+
+**Bun ships an S3 client**, and R2 speaks S3, so storage needs no dependency — `new S3Client({
+endpoint: "https://<account>.r2.cloudflarestorage.com", region: "auto" })`. Presigning is pure
+computation, so `test/storage.test.ts` exercises the real adapter with throwaway credentials while
+every other test uses the in-memory fake.
+
 ---
 
 ## 15. Milestones
@@ -416,7 +442,7 @@ name its own role. This is the security boundary of the entire role system.
 | **M0** | Scaffold, spec committed | `bun install` and `check-types` pass — **done** |
 | **M1** | Postgres compose, test harness, configurable port, OpenAPI at `/docs`, error envelope, cursor helpers, CI | Server boots, `/docs` renders, tests run against real Postgres — **done** |
 | **M2** | Roles, Firebase exchange, `requireRole`, role invites, onboarding, region/language seeds | A Firebase token yields a session; a `user` is rejected from designer routes — **done** |
-| **M3** | Tags, R2 upload, lifecycle state machine, admin review | A designer takes an image from draft to published via admin approval |
+| **M3** | Tags, R2 upload, lifecycle state machine, admin review | A designer takes an image from draft to published via admin approval — **done** |
 | **M4** | Feed scoring, stable cursor, search indexes | Two users in different regions get different feeds; paging has no gaps |
 | **M5** | Tracked downloads, idempotency, signed URLs | A download is attributed to the right designer and region |
 | **M6** | Reports, auto-hold threshold, admin resolution | 5 reports pull an item from the feed |

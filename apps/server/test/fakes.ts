@@ -5,6 +5,7 @@
  */
 
 import { unauthenticated } from "../src/lib/errors";
+import type { ObjectStorage, StoredObject } from "../src/lib/storage";
 import type {
 	TokenVerifier,
 	VerifiedIdentity,
@@ -46,6 +47,63 @@ export function fakeTokenVerifier() {
 		},
 		reset() {
 			identities.clear();
+		},
+	};
+}
+
+/**
+ * In-memory ObjectStorage.
+ *
+ * Presigned URLs are fake but structurally honest — distinct per key, and
+ * carrying the method — so tests can assert a URL was handed out without a
+ * network call. `putObject` simulates the client's direct PUT to R2, which is
+ * the step the server never sees.
+ */
+export function fakeObjectStorage() {
+	const objects = new Map<string, StoredObject>();
+	const deleted: string[] = [];
+	let failDeletes = false;
+
+	const storage: ObjectStorage = {
+		presignUpload({ key, contentType, expiresInSeconds }) {
+			return `https://fake-r2.test/${key}?method=PUT&type=${encodeURIComponent(contentType)}&expires=${expiresInSeconds}`;
+		},
+
+		presignDownload({ key, expiresInSeconds }) {
+			return `https://fake-r2.test/${key}?method=GET&expires=${expiresInSeconds}`;
+		},
+
+		async stat(key) {
+			return objects.get(key) ?? null;
+		},
+
+		async delete(key) {
+			if (failDeletes) throw new Error("simulated storage failure");
+			objects.delete(key);
+			deleted.push(key);
+		},
+	};
+
+	return {
+		storage,
+		/** Stands in for the client PUTting the file straight to R2. */
+		putObject(key: string, object: Partial<StoredObject> = {}) {
+			objects.set(key, {
+				size: object.size ?? 2048,
+				contentType: object.contentType ?? "image/jpeg",
+			});
+			return key;
+		},
+		has: (key: string) => objects.has(key),
+		deletedKeys: () => [...deleted],
+		/** Forces deletes to throw, to exercise the cleanup job's failure path. */
+		breakDeletes(broken = true) {
+			failDeletes = broken;
+		},
+		reset() {
+			objects.clear();
+			deleted.length = 0;
+			failDeletes = false;
 		},
 	};
 }

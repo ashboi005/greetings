@@ -2,12 +2,15 @@ import { db } from "@greetings/db";
 import {
 	languages,
 	regions,
+	TAG_CATEGORIES,
+	tags,
 	userLanguages,
 	userProfiles,
 } from "@greetings/db/schema";
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest, notFound } from "../../lib/errors";
+import { optionalEnum } from "../../lib/schema";
 import { authGuard, requireUser } from "../auth/session";
 
 /**
@@ -47,6 +50,33 @@ export function profileRoutes() {
 					.orderBy(asc(languages.name)),
 			{
 				detail: { tags: ["Reference"], summary: "Supported languages" },
+			},
+		)
+		.get(
+			"/tags",
+			({ query }) =>
+				db
+					.select({
+						id: tags.id,
+						slug: tags.slug,
+						label: tags.label,
+						category: tags.category,
+					})
+					.from(tags)
+					.where(
+						query.category
+							? and(eq(tags.isActive, true), eq(tags.category, query.category))
+							: eq(tags.isActive, true),
+					)
+					.orderBy(asc(tags.category), asc(tags.label)),
+			{
+				query: t.Object({
+					category: optionalEnum(TAG_CATEGORIES),
+				}),
+				detail: {
+					tags: ["Reference"],
+					summary: "Tags designers may apply and users may filter by",
+				},
 			},
 		)
 		.get(

@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { UserRole } from "@greetings/db/schema";
 import { createApp } from "../src/app";
 import { truncateAll } from "./db";
-import { fakeTokenVerifier } from "./fakes";
+import { fakeObjectStorage, fakeTokenVerifier } from "./fakes";
 import {
 	authHelper,
 	client,
@@ -20,7 +20,11 @@ import {
 } from "./helpers";
 
 const firebase = fakeTokenVerifier();
-const app = createApp({ tokenVerifier: firebase.verifier });
+const r2 = fakeObjectStorage();
+const app = createApp({
+	tokenVerifier: firebase.verifier,
+	objectStorage: r2.storage,
+});
 const api = client(app);
 
 const ALL_ROLES: UserRole[] = ["user", "designer", "admin", "super_admin"];
@@ -74,6 +78,95 @@ const ENDPOINTS: GuardedEndpoint[] = [
 		allowed: ["super_admin"],
 		call: (token) => api.get("/v1/admin/roles/invites", { token }),
 	},
+	// --- Designer content (M3) ---
+	{
+		name: "POST /v1/designer/content",
+		allowed: ["designer"],
+		call: (token) =>
+			api.post("/v1/designer/content", {
+				token,
+				body: { title: "T", primaryLanguage: "hi" },
+			}),
+	},
+	{
+		name: "GET /v1/designer/content",
+		allowed: ["designer"],
+		call: (token) => api.get("/v1/designer/content", { token }),
+	},
+	{
+		name: "POST /v1/designer/content/:id/upload-url",
+		allowed: ["designer"],
+		call: (token) =>
+			api.post("/v1/designer/content/nope/upload-url", {
+				token,
+				body: { mimeType: "image/jpeg", bytes: 1024 },
+			}),
+	},
+	{
+		name: "POST /v1/designer/content/:id/assets",
+		allowed: ["designer"],
+		call: (token) =>
+			api.post("/v1/designer/content/nope/assets", {
+				token,
+				body: { storageKey: "content/nope/x.jpg", width: 1, height: 1 },
+			}),
+	},
+	{
+		name: "PUT /v1/designer/content/:id/tags",
+		allowed: ["designer"],
+		call: (token) =>
+			api.put("/v1/designer/content/nope/tags", {
+				token,
+				body: { tagIds: ["tag_diwali"] },
+			}),
+	},
+	{
+		name: "POST /v1/designer/content/:id/submit",
+		allowed: ["designer"],
+		call: (token) => api.post("/v1/designer/content/nope/submit", { token }),
+	},
+
+	// --- Admin review (M3) ---
+	{
+		name: "GET /v1/admin/content/queue",
+		allowed: ["admin", "super_admin"],
+		call: (token) => api.get("/v1/admin/content/queue", { token }),
+	},
+	{
+		name: "GET /v1/admin/content/:id",
+		allowed: ["admin", "super_admin"],
+		call: (token) => api.get("/v1/admin/content/nope", { token }),
+	},
+	{
+		name: "POST /v1/admin/content/:id/approve",
+		allowed: ["admin", "super_admin"],
+		call: (token) => api.post("/v1/admin/content/nope/approve", { token }),
+	},
+	{
+		name: "POST /v1/admin/content/:id/reject",
+		allowed: ["admin", "super_admin"],
+		call: (token) =>
+			api.post("/v1/admin/content/nope/reject", {
+				token,
+				body: { reason: "no" },
+			}),
+	},
+	{
+		name: "POST /v1/admin/content/:id/remove",
+		allowed: ["admin", "super_admin"],
+		call: (token) =>
+			api.post("/v1/admin/content/nope/remove", {
+				token,
+				body: { reason: "no" },
+			}),
+	},
+	{
+		name: "POST /v1/admin/content/:id/restore",
+		allowed: ["admin", "super_admin"],
+		call: (token) =>
+			api.post("/v1/admin/content/nope/restore", { token, body: {} }),
+	},
+
 	{
 		name: "DELETE /v1/admin/roles/invites/:id",
 		allowed: ["super_admin"],

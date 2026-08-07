@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
-import { index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { index, pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { user, userRoleEnum } from "./auth";
+import { content } from "./content";
 
 /**
  * Audit trail for privileged actions (spec §4.4).
@@ -30,6 +31,64 @@ export const roleChangeLog = pgTable(
 		index("role_change_log_target_idx").on(table.targetUserId),
 		index("role_change_log_created_at_idx").on(table.createdAt),
 	],
+);
+
+/**
+ * Every lifecycle move, recorded (spec §5).
+ *
+ * Written by `transition()` on each state change, so the history of a piece of
+ * content is reconstructable: who submitted it, who approved it, who pulled it
+ * down and why. Kept append-only — corrections are new rows, not edits.
+ */
+export const moderationActionEnum = pgEnum("moderation_action", [
+	"submit",
+	"approve",
+	"reject",
+	"remove",
+	"restore",
+	"hold",
+]);
+
+export const MODERATION_ACTIONS = moderationActionEnum.enumValues;
+export type ModerationAction = (typeof MODERATION_ACTIONS)[number];
+
+export const moderationActions = pgTable(
+	"moderation_actions",
+	{
+		id: text("id").primaryKey(),
+		// Null when the system acted on its own — the automatic hold once
+		// reports cross the threshold has no human actor.
+		actorId: text("actor_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		contentId: text("content_id")
+			.notNull()
+			.references(() => content.id, { onDelete: "cascade" }),
+		action: moderationActionEnum("action").notNull(),
+		reason: text("reason"),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [
+		index("moderation_actions_content_idx").on(
+			table.contentId,
+			table.createdAt,
+		),
+		index("moderation_actions_actor_idx").on(table.actorId),
+	],
+);
+
+export const moderationActionRelations = relations(
+	moderationActions,
+	({ one }) => ({
+		actor: one(user, {
+			fields: [moderationActions.actorId],
+			references: [user.id],
+		}),
+		content: one(content, {
+			fields: [moderationActions.contentId],
+			references: [content.id],
+		}),
+	}),
 );
 
 export const roleChangeLogRelations = relations(roleChangeLog, ({ one }) => ({

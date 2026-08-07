@@ -6,9 +6,12 @@ import { env } from "@greetings/env/server";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { errorHandler } from "./lib/error-plugin";
+import { type ObjectStorage, requireObjectStorage } from "./lib/storage";
 import type { TokenVerifier } from "./lib/token-verifier";
 import { adminRoleRoutes } from "./modules/admin/roles";
 import { authRoutes } from "./modules/auth/routes";
+import { adminContentRoutes } from "./modules/content/admin-routes";
+import { designerContentRoutes } from "./modules/content/designer-routes";
 import { profileRoutes } from "./modules/profile/routes";
 
 /**
@@ -24,9 +27,27 @@ import { profileRoutes } from "./modules/profile/routes";
 export interface AppOptions {
 	/** Injected by tests so sign-in never calls Google. */
 	tokenVerifier?: TokenVerifier;
+	/** Injected by tests so uploads never reach Cloudflare. */
+	objectStorage?: ObjectStorage;
 }
 
 export function createApp(options: AppOptions = {}) {
+	// Resolved on first use rather than at construction, so a server without R2
+	// credentials still boots and only upload endpoints report the gap.
+	let storage: ObjectStorage | undefined;
+	const getStorage = () => {
+		storage ??= requireObjectStorage(
+			{
+				accountId: env.R2_ACCOUNT_ID,
+				accessKeyId: env.R2_ACCESS_KEY_ID,
+				secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+				bucket: env.R2_BUCKET,
+			},
+			options.objectStorage,
+		);
+		return storage;
+	};
+
 	return (
 		new Elysia()
 			.use(errorHandler)
@@ -102,6 +123,8 @@ export function createApp(options: AppOptions = {}) {
 			.use(authRoutes(options.tokenVerifier))
 			.use(profileRoutes())
 			.use(adminRoleRoutes())
+			.use(designerContentRoutes(getStorage))
+			.use(adminContentRoutes())
 			// Registered last so earlier routes win; this catches only genuinely
 			// unmatched paths. A real route rather than the NOT_FOUND branch of
 			// onError because the evlog plugin drops the body of that response,

@@ -3,12 +3,18 @@
  */
 
 import type { UserRole } from "@greetings/db/schema";
-import { languages, regions, user as userTable } from "@greetings/db/schema";
+import {
+	languages,
+	regions,
+	tags,
+	user as userTable,
+} from "@greetings/db/schema";
 import { LANGUAGE_SEED, REGION_SEED } from "@greetings/db/seed/reference";
+import { TAG_SEED } from "@greetings/db/seed/tags";
 import { eq } from "drizzle-orm";
 import { testDb } from "./db";
 
-/** Reference data every test that touches profiles needs present. */
+/** Reference data every test that touches profiles or content needs present. */
 export async function seedReference(): Promise<void> {
 	await testDb
 		.insert(regions)
@@ -17,6 +23,19 @@ export async function seedReference(): Promise<void> {
 	await testDb
 		.insert(languages)
 		.values([...LANGUAGE_SEED])
+		.onConflictDoNothing();
+	await testDb
+		.insert(tags)
+		.values(
+			TAG_SEED.map((tag) => ({
+				// Same id scheme as the real seed, so tests can name a tag
+				// directly (`tag_diwali`) instead of looking it up.
+				id: `tag_${tag.slug}`,
+				slug: tag.slug,
+				label: tag.label,
+				category: tag.category,
+			})),
+		)
 		.onConflictDoNothing();
 }
 

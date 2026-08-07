@@ -9,13 +9,15 @@
 
 import { eq, sql } from "drizzle-orm";
 import { db } from "../index";
-import { roleChangeLog, user as userTable } from "../schema";
+import { roleChangeLog, tags, user as userTable } from "../schema";
 import { languages, regions } from "../schema/profile";
 import { LANGUAGE_SEED, REGION_SEED } from "./reference";
+import { TAG_SEED } from "./tags";
 
 export async function seedReferenceData(): Promise<{
 	regions: number;
 	languages: number;
+	tags: number;
 }> {
 	await db
 		.insert(regions)
@@ -36,7 +38,31 @@ export async function seedReferenceData(): Promise<{
 			},
 		});
 
-	return { regions: REGION_SEED.length, languages: LANGUAGE_SEED.length };
+	// Keyed on slug, not id, so re-running never duplicates a tag and never
+	// orphans content already tagged with it.
+	await db
+		.insert(tags)
+		.values(
+			TAG_SEED.map((tag) => ({
+				id: `tag_${tag.slug}`,
+				slug: tag.slug,
+				label: tag.label,
+				category: tag.category,
+			})),
+		)
+		.onConflictDoUpdate({
+			target: tags.slug,
+			set: {
+				label: sqlExcluded("label"),
+				category: sqlExcluded("category"),
+			},
+		});
+
+	return {
+		regions: REGION_SEED.length,
+		languages: LANGUAGE_SEED.length,
+		tags: TAG_SEED.length,
+	};
 }
 
 /**
