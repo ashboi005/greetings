@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: greetings
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/greetings
+      TEST_DATABASE_URL: postgresql://postgres:password@localhost:5432/greetings_test
+      BETTER_AUTH_SECRET: ci-secret-value-at-least-32-characters-long
+      BETTER_AUTH_URL: http://localhost:3000
+      CORS_ORIGIN: http://localhost:3001
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - run: bun install --frozen-lockfile
+
+      # Service containers ignore docker-entrypoint-initdb.d, so the test
+      # database and its extensions are created here instead of scripts/init-db.sql.
+      - name: Create test database
+        run: |
+          psql "$DATABASE_URL" -c 'CREATE DATABASE greetings_test;'
+          psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+          psql "$TEST_DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+
+      # Phase 1 owns the backend; the scaffolded web/native/ui code still has
+      # lint violations that Phase 2 will clear. Widen this as those land.
+      - name: Lint and format
+        run: bunx biome check apps/server packages/db packages/env packages/auth
+
+      - name: Typecheck
+        run: bun run check-types
+
+      - name: Apply migrations
+        run: bun run db:migrate:test
+
+      - name: Test
+        run: bun run test
+
+      - name: Build
+        run: bun run --filter server build

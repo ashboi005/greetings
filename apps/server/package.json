@@ -1,30 +1,33 @@
 {
-  "name": "server",
-  "type": "module",
-  "main": "src/index.ts",
-  "scripts": {
-    "build": "tsdown",
-    "check-types": "tsc -b",
-    "compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
-    "dev": "bun run --hot src/index.ts",
-    "start": "bun run dist/index.mjs"
-  },
-  "dependencies": {
-    "@elysiajs/cors": "^1.4.2",
-    "@greetings/auth": "workspace:*",
-    "@greetings/db": "workspace:*",
-    "@greetings/env": "workspace:*",
-    "@sinclair/typebox": "^0.34.52",
-    "better-auth": "catalog:",
-    "dotenv": "catalog:",
-    "elysia": "^1.4.29",
-    "evlog": "catalog:",
-    "zod": "catalog:"
-  },
-  "devDependencies": {
-    "@greetings/config": "workspace:*",
-    "@types/bun": "catalog:",
-    "tsdown": "^0.22.14",
-    "typescript": "^6.0.3"
-  }
+	"name": "server",
+	"type": "module",
+	"main": "src/index.ts",
+	"scripts": {
+		"build": "tsdown",
+		"check-types": "tsc -b",
+		"compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
+		"dev": "bun run --hot src/index.ts",
+		"test": "bun test",
+		"start": "bun run dist/index.mjs"
+	},
+	"dependencies": {
+		"@elysiajs/cors": "^1.4.2",
+		"@elysiajs/openapi": "^1.4.15",
+		"@greetings/auth": "workspace:*",
+		"@greetings/db": "workspace:*",
+		"@greetings/env": "workspace:*",
+		"@sinclair/typebox": "^0.34.52",
+		"better-auth": "catalog:",
+		"dotenv": "catalog:",
+		"drizzle-orm": "^0.45.2",
+		"elysia": "^1.4.29",
+		"evlog": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@greetings/config": "workspace:*",
+		"@types/bun": "catalog:",
+		"tsdown": "^0.22.14",
+		"typescript": "^6.0.3"
+	}
 }

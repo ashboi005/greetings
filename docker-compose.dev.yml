@@ -1,0 +1,39 @@
+# Local development dependencies.
+#
+# Separate from docker-compose.yml, which builds web + server images for deploy.
+# This file provides only the backing services a developer needs running.
+#
+#   Start:  bun run db:up
+#   Stop:   bun run db:down
+#   Reset:  bun run db:reset   (destroys the volume)
+
+name: greetings-dev
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: greetings
+    volumes:
+      # Postgres 18+ images store data in a major-version subdirectory, so the
+      # mount belongs at /var/lib/postgresql, not /var/lib/postgresql/data.
+      # Mounting the old path makes the container refuse to start.
+      - postgres_data:/var/lib/postgresql
+      # Runs only on first init of an empty volume.
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      # The `-d greetings` is deliberate: without it pg_isready reports ready
+      # during the bootstrap phase, before the init scripts have run.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d greetings"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  postgres_data:

@@ -328,12 +328,42 @@ Found while verifying the generated project. Each is addressed in the milestone 
 
 | Gap | Milestone |
 |---|---|
-| `docker-compose.yml` has no Postgres service (it only builds web + server for deploy) | M1 |
-| No test infrastructure or test database | M1 |
-| Server port hardcoded to `3000` in `apps/server/src/index.ts` | M1 |
-| No OpenAPI plugin installed | M1 |
+| ~~`docker-compose.yml` has no Postgres service~~ — added `docker-compose.dev.yml` | done (M1) |
+| ~~No test infrastructure or test database~~ — `greetings_test` + `bun:test` harness | done (M1) |
+| ~~Server port hardcoded to `3000`~~ — now `PORT` in `packages/env` | done (M1) |
+| ~~No OpenAPI plugin installed~~ — `@elysiajs/openapi` at `/docs` | done (M1) |
 | `emailAndPassword` enabled in `packages/auth/src/index.ts` — must be disabled | M2 |
 | `packages/db/src/schema/` contains only `auth.ts` | M2–M7 |
+
+---
+
+## 14a. Constraints discovered while building M1
+
+Non-obvious behaviours that shaped the code. Each is enforced by a test or a comment at the
+relevant line, but they are recorded here because they will otherwise be rediscovered the hard way.
+
+**`evlog/elysia` must not be imported by anything under test.** It creates an `AsyncLocalStorage`
+via `enterWith()` at module scope, which permanently rebinds the async context and stops Bun's test
+runner from ever marking the *next* test complete — the symptom is an unrelated, often synchronous,
+test timing out. `createApp()` in `apps/server/src/app.ts` is therefore free of logging, and
+`index.ts` layers evlog on top. Keep it that way: any future module that imports `evlog/elysia`
+becomes untestable, and takes its importers with it.
+
+**Unmatched routes need a real catch-all route, not `onError`.** The evlog plugin drops the body of
+the response produced by the `NOT_FOUND` branch of `onError`, turning production 404s into an empty
+body with no envelope. `createApp()` ends with an `.all("/*")` route instead. Tests alone would not
+have caught this — it only appears once evlog is mounted, which the tests deliberately avoid, so it
+was found by curling a running server. Verify error paths against a real server, not just
+`app.handle()`.
+
+**`tsc -b` must not emit JavaScript.** With `composite: true` and `outDir: dist`, `check-types`
+compiled the test files into `dist/`, where `bun test` collected and ran them a second time — the
+suite silently reported double the tests. `emitDeclarationOnly: true` in
+`apps/server/tsconfig.json` prevents it; `tsdown` still produces the real build.
+
+**Postgres 18 images changed their volume convention.** The data volume mounts at
+`/var/lib/postgresql`, not `/var/lib/postgresql/data`; the old path makes the container
+restart-loop.
 
 ---
 
@@ -342,7 +372,7 @@ Found while verifying the generated project. Each is addressed in the milestone 
 | # | Scope | Verifiable when |
 |---|---|---|
 | **M0** | Scaffold, spec committed | `bun install` and `check-types` pass — **done** |
-| **M1** | Postgres compose, test harness, configurable port, OpenAPI at `/docs`, error envelope, cursor helpers, CI | Server boots, `/docs` renders, tests run against real Postgres |
+| **M1** | Postgres compose, test harness, configurable port, OpenAPI at `/docs`, error envelope, cursor helpers, CI | Server boots, `/docs` renders, tests run against real Postgres — **done** |
 | **M2** | Roles, Firebase exchange, `requireRole`, role invites, onboarding, region/language seeds | A Firebase token yields a session; a `user` is rejected from designer routes |
 | **M3** | Tags, R2 upload, lifecycle state machine, admin review | A designer takes an image from draft to published via admin approval |
 | **M4** | Feed scoring, stable cursor, search indexes | Two users in different regions get different feeds; paging has no gaps |

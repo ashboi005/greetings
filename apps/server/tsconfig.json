@@ -1,11 +1,15 @@
 {
-  "extends": "@greetings/config/tsconfig.base.json",
-  "compilerOptions": {
-    "composite": true,
-    "outDir": "dist",
-    "paths": {
-      "@/*": ["./src/*"]
-    },
-    "jsx": "react-jsx"
-  }
+	"extends": "@greetings/config/tsconfig.base.json",
+	"compilerOptions": {
+		"composite": true,
+		"outDir": "dist",
+		// check-types only needs type information. Without this, `tsc -b` emits
+		// compiled copies of the test files into dist/, and `bun test` then
+		// collects and runs them a second time.
+		"emitDeclarationOnly": true,
+		"paths": {
+			"@/*": ["./src/*"]
+		},
+		"jsx": "react-jsx"
+	}
 }

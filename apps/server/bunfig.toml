@@ -1,0 +1,3 @@
+[test]
+# Redirects DATABASE_URL to the test database before any module reads env.
+preload = ["./test/preload.ts"]

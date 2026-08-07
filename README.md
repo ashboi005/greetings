@@ -25,28 +25,46 @@ First, install the dependencies:
 bun install
 ```
 
-## Database Setup
+## Backend Development
 
-This project uses PostgreSQL with Drizzle ORM.
-
-1. Make sure you have a PostgreSQL database set up.
-2. Update your `apps/server/.env` file with your PostgreSQL connection details.
-
-3. Apply the schema to your database:
+The current phase is backend-only. See [`docs/specs/greetings-backend.md`](docs/specs/greetings-backend.md)
+for the product and architecture specification.
 
 ```bash
-bun run db:push
+bun install
+cp apps/server/.env.example apps/server/.env   # then edit if 3000/5432 are taken
+bun run db:up            # Postgres 18 in Docker: greetings + greetings_test
+bun run db:migrate       # apply migrations to the dev database
+bun run db:migrate:test  # and to the test database
+bun run dev:server
 ```
 
-Then, run the development server:
+The API listens on `PORT` (default 3000). Interactive docs are at
+[http://localhost:3000/docs](http://localhost:3000/docs) — that generated OpenAPI document is the
+contract the mobile app is built against.
+
+```bash
+bun run test          # integration tests against greetings_test
+bun run check-types   # TypeScript across all workspaces
+bun run check         # Biome format + lint
+```
+
+Tests run against a real Postgres rather than mocks, because the logic worth testing (feed ranking,
+rollups, constraints) lives in the database. They talk only to `greetings_test`, and both the
+preload and the harness refuse to run against a database whose name does not end in `_test`.
+
+`bun run db:reset` destroys the volume and starts clean.
+
+### Full stack
+
+To run the web and native apps alongside the server:
 
 ```bash
 bun run dev
 ```
 
-Open [http://localhost:3001](http://localhost:3001) in your browser to see the web application.
-Use the Expo Go app to run the mobile application.
-The API is running at [http://localhost:3000](http://localhost:3000).
+Web on [http://localhost:3001](http://localhost:3001), API on
+[http://localhost:3000](http://localhost:3000), mobile through Expo Go.
 
 ## UI Customization
 
@@ -115,9 +133,12 @@ greetings/
 - `bun run dev:server`: Start only the server
 - `bun run check-types`: Check TypeScript types across all apps
 - `bun run dev:native`: Start the React Native/Expo development server
+- `bun run test`: Run the backend test suite
+- `bun run db:up` / `db:down` / `db:reset`: Manage the local Postgres container
 - `bun run db:push`: Push schema changes to database
-- `bun run db:generate`: Generate database client/types
+- `bun run db:generate`: Generate a migration from schema changes
 - `bun run db:migrate`: Run database migrations
+- `bun run db:migrate:test`: Run migrations against the test database
 - `bun run db:studio`: Open database studio UI
 - `bun run check`: Run Biome formatting and linting
 - `bun run docker:build`: Build the Docker Compose images
