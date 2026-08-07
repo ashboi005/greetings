@@ -484,6 +484,29 @@ speaks. `regionCode` is the opposite: it comes from the user's profile, frozen a
 second fastest-growing table in the system. They are kept an hour — far longer than the 60-second
 replay window — so they double as a short trail when diagnosing a client's retry behaviour.
 
+## 14f. Constraints discovered while building M8
+
+**Do not rate-limit by IP tightly in this market.** Indian mobile carriers use carrier-grade NAT, so
+one address can front thousands of genuine users; a tight per-IP limit locks out a network rather
+than an abuser. Sign-in allows 600/minute per address — a backstop against a client burning CPU on
+token verification, not a credential guard, since Google has already authenticated the token.
+Downloads are limited per *user* (120/minute) for the same reason. The test suite found this the
+hard way: every test request shared one address, and a 20/minute limit failed 276 tests.
+
+**Response schemas are declared with Elysia's `response`, not free-text documentation.** They are
+validated at runtime, so the published contract cannot drift from what the server returns — a shape
+change fails a test instead of surprising the mobile developer. Only the endpoints the React Native
+app consumes are covered; the web panels are written in this repository against the same TypeScript
+types, where a hand-maintained schema would add drift risk without adding safety.
+
+**Test files share one database and one in-process rate-limit store.** A test that deliberately
+exhausts a quota must use an address range no other file generates *and* clear the store afterwards,
+or it fails unrelated files. The suite was verified stable across three consecutive full runs after
+this was fixed.
+
+**A nightly job must not abort when an optional dependency is missing.** Cleanup crashed on an
+unconfigured R2 and left the rollup half-done; it now purges what it can and reports the skip.
+
 ---
 
 ## 15. Milestones
@@ -498,7 +521,7 @@ replay window — so they double as a short trail when diagnosing a client's ret
 | **M5** | Tracked downloads, idempotency, signed URLs | A download is attributed to the right designer and region — **done** |
 | **M6** | Reports, auto-hold threshold, admin resolution | 5 reports pull an item from the feed — **done** |
 | **M7** | Analytics endpoints, nightly rollup job | Rollup totals equal a live aggregation — **done** |
-| **M8** | Rate limits, production Dockerfiles, seed data, OpenAPI handoff review | Full end-to-end walkthrough passes |
+| **M8** | Rate limits, production Dockerfiles, seed data, OpenAPI handoff review | Full end-to-end walkthrough passes — **done** |
 
 Each milestone lands with its tests green before the next begins.
 

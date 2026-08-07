@@ -4,6 +4,11 @@ import { eq } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest } from "../../lib/errors";
 import { decodeCursor, encodeCursor } from "../../lib/pagination";
+import {
+	errorResponse,
+	feedResponse,
+	searchResponse,
+} from "../../lib/responses";
 import { authGuard, requireUser } from "../auth/session";
 import { queryFeed, querySearch } from "./queries";
 import { currentBucket, decodeFeedCursor, encodeFeedCursor } from "./ranking";
@@ -62,6 +67,7 @@ export function feedRoutes() {
 					cursor: t.Optional(t.String()),
 					limit: t.Optional(t.Integer({ minimum: 1, maximum: MAX_LIMIT })),
 				}),
+				response: { 200: feedResponse, 400: errorResponse, 401: errorResponse },
 				detail: {
 					tags: ["Feed"],
 					summary: "Personalised feed of published content",
@@ -120,6 +126,11 @@ export function feedRoutes() {
 					cursor: t.Optional(t.String()),
 					limit: t.Optional(t.Integer({ minimum: 1, maximum: MAX_LIMIT })),
 				}),
+				response: {
+					200: searchResponse,
+					400: errorResponse,
+					401: errorResponse,
+				},
 				detail: {
 					tags: ["Feed"],
 					summary: "Search published content by title and tags",

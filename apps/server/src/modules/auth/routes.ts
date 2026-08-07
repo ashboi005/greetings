@@ -1,5 +1,11 @@
 import { env } from "@greetings/env/server";
 import { Elysia, t } from "elysia";
+import { clientIp, consume } from "../../lib/rate-limit";
+import {
+	currentUserResponse,
+	errorResponse,
+	sessionResponse,
+} from "../../lib/responses";
 import type { TokenVerifier } from "../../lib/token-verifier";
 import { requireTokenVerifier } from "../../lib/token-verifier";
 import { signInWithVerifiedIdentity } from "./firebase-signin";
@@ -25,7 +31,19 @@ export function authRoutes(verifierOverride?: TokenVerifier) {
 		.use(authGuard)
 		.post(
 			"/firebase",
-			async ({ body }) => {
+			async ({ body, request }) => {
+				// Keyed on IP because there is no user yet, and deliberately
+				// generous. Indian mobile carriers use carrier-grade NAT, so a
+				// single address can front thousands of genuine users — a tight
+				// per-IP limit locks out a whole network rather than an abuser.
+				// This is a backstop against resource exhaustion (each attempt
+				// costs a JWKS fetch and a signature check), not a credential
+				// guard: Google has already authenticated the token.
+				consume(`auth:firebase:${clientIp(request)}`, {
+					limit: 600,
+					windowSeconds: 60,
+				});
+
 				const identity = await getVerifier().verify(body.idToken);
 				return signInWithVerifiedIdentity(identity);
 			},
@@ -36,6 +54,11 @@ export function authRoutes(verifierOverride?: TokenVerifier) {
 						description: "Firebase ID token obtained by the mobile client",
 					}),
 				}),
+				response: {
+					200: sessionResponse,
+					401: errorResponse,
+					429: errorResponse,
+				},
 				detail: {
 					tags: ["Auth"],
 					summary: "Exchange a Firebase ID token for a session",
@@ -56,6 +79,7 @@ export function authRoutes(verifierOverride?: TokenVerifier) {
 			}),
 			{
 				requireRole: true,
+				response: { 200: currentUserResponse, 401: errorResponse },
 				detail: {
 					tags: ["Auth"],
 					summary: "The signed-in user and their role",

@@ -1,5 +1,7 @@
 import { DOWNLOAD_SOURCES } from "@greetings/db/schema";
 import { Elysia, t } from "elysia";
+import { consume } from "../../lib/rate-limit";
+import { downloadResponse, errorResponse } from "../../lib/responses";
 import { optionalEnum } from "../../lib/schema";
 import type { ObjectStorage } from "../../lib/storage";
 import { authGuard, requireUser } from "../auth/session";
@@ -17,6 +19,12 @@ export function downloadRoutes(storage: () => ObjectStorage) {
 		"/content/:id/download",
 		async ({ currentUser, params, body, headers }) => {
 			const user = requireUser(currentUser);
+
+			// Keyed on user, not IP: households and mobile carriers share
+			// addresses heavily in this market, and throttling by IP would
+			// punish ordinary users. Generous, because saving a batch of images
+			// in one sitting is exactly what the product is for.
+			consume(`download:${user.id}`, { limit: 120, windowSeconds: 60 });
 
 			return recordDownload({
 				contentId: params.id,
@@ -50,6 +58,13 @@ export function downloadRoutes(storage: () => ObjectStorage) {
 				// carries plenty this route does not care about.
 				{ additionalProperties: true },
 			),
+			response: {
+				200: downloadResponse,
+				401: errorResponse,
+				404: errorResponse,
+				409: errorResponse,
+				429: errorResponse,
+			},
 			detail: {
 				tags: ["Feed"],
 				summary: "Record a download and get a signed image URL",

@@ -10,6 +10,14 @@ import {
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest, notFound } from "../../lib/errors";
+import {
+	errorResponse,
+	languageListResponse,
+	okResponse,
+	profileResponse,
+	regionListResponse,
+	tagListResponse,
+} from "../../lib/responses";
 import { optionalEnum } from "../../lib/schema";
 import { authGuard, requireUser } from "../auth/session";
 
@@ -31,6 +39,7 @@ export function profileRoutes() {
 					.from(regions)
 					.orderBy(asc(regions.name)),
 			{
+				response: { 200: regionListResponse },
 				detail: {
 					tags: ["Reference"],
 					summary: "Indian states and union territories",
@@ -49,6 +58,7 @@ export function profileRoutes() {
 					.from(languages)
 					.orderBy(asc(languages.name)),
 			{
+				response: { 200: languageListResponse },
 				detail: { tags: ["Reference"], summary: "Supported languages" },
 			},
 		)
@@ -73,6 +83,7 @@ export function profileRoutes() {
 				query: t.Object({
 					category: optionalEnum(TAG_CATEGORIES),
 				}),
+				response: { 200: tagListResponse },
 				detail: {
 					tags: ["Reference"],
 					summary: "Tags designers may apply and users may filter by",
@@ -110,6 +121,7 @@ export function profileRoutes() {
 			},
 			{
 				requireRole: true,
+				response: { 200: profileResponse, 401: errorResponse },
 				detail: { tags: ["Profile"], summary: "The caller's own profile" },
 			},
 		)
@@ -175,6 +187,12 @@ export function profileRoutes() {
 						description: "Preferred language codes from GET /v1/languages",
 					}),
 				}),
+				response: {
+					200: okResponse,
+					400: errorResponse,
+					401: errorResponse,
+					404: errorResponse,
+				},
 				detail: {
 					tags: ["Profile"],
 					summary: "Complete or update onboarding",

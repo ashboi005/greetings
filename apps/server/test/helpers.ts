@@ -100,8 +100,12 @@ export function authHelper(
 			};
 
 			firebase.register(`tok-${n}a`, identity);
+			// A distinct address per user, as real clients have. Sign-in is
+			// rate-limited per IP, and funnelling the whole suite through one
+			// address would make tests fail for reasons no user would hit.
 			let res = await api.post("/v1/auth/firebase", {
 				body: { idToken: `tok-${n}a` },
+				ip: `198.51.100.${n % 250}`,
 			});
 
 			const userId = res.body.user.id as string;
@@ -113,6 +117,7 @@ export function authHelper(
 				firebase.register(`tok-${n}b`, identity);
 				res = await api.post("/v1/auth/firebase", {
 					body: { idToken: `tok-${n}b` },
+					ip: `198.51.100.${n % 250}`,
 				});
 			}
 
@@ -131,6 +136,7 @@ export function authHelper(
 			firebase.register(token, identity);
 			const res = await api.post("/v1/auth/firebase", {
 				body: { idToken: token },
+				ip: `198.51.100.${seq % 250}`,
 			});
 			return res.body as { token: string; user: { role: UserRole } };
 		},
@@ -142,10 +148,11 @@ export function client(app: { handle(req: Request): Promise<Response> }) {
 	const call = async (
 		method: string,
 		path: string,
-		options: { token?: string; body?: unknown } = {},
+		options: { token?: string; body?: unknown; ip?: string } = {},
 	) => {
 		const headers: Record<string, string> = {};
 		if (options.token) Object.assign(headers, bearer(options.token));
+		if (options.ip) headers["x-forwarded-for"] = options.ip;
 		if (options.body !== undefined)
 			headers["content-type"] = "application/json";
 
@@ -171,13 +178,12 @@ export function client(app: { handle(req: Request): Promise<Response> }) {
 		return { status: res.status, body: json as TestBody, raw: text };
 	};
 
+	type Options = { token?: string; body?: unknown; ip?: string };
+
 	return {
-		get: (path: string, opts?: { token?: string }) => call("GET", path, opts),
-		post: (path: string, opts?: { token?: string; body?: unknown }) =>
-			call("POST", path, opts),
-		put: (path: string, opts?: { token?: string; body?: unknown }) =>
-			call("PUT", path, opts),
-		delete: (path: string, opts?: { token?: string }) =>
-			call("DELETE", path, opts),
+		get: (path: string, opts?: Options) => call("GET", path, opts),
+		post: (path: string, opts?: Options) => call("POST", path, opts),
+		put: (path: string, opts?: Options) => call("PUT", path, opts),
+		delete: (path: string, opts?: Options) => call("DELETE", path, opts),
 	};
 }

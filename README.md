@@ -43,6 +43,19 @@ bun run dev:server
 `db:seed` is idempotent, so it is safe to re-run after any migration. To grant yourself super admin,
 sign in once with Google, set `SUPER_ADMIN_EMAIL` in `apps/server/.env`, then re-run it.
 
+### Scheduled work
+
+One job needs a schedule in every environment:
+
+```bash
+bun run jobs nightly     # daily rollup + cleanup; idempotent, safe to retry
+bun run jobs rollup 2026-08-01 2026-08-07   # backfill a range
+```
+
+Analytics read pre-aggregated rows for past dates, so without this the dashboards lose history
+older than today. Every job is idempotent, so a missed night is repaired by the next run or a
+manual backfill.
+
 The API listens on `PORT` (default 3000). Interactive docs are at
 [http://localhost:3000/docs](http://localhost:3000/docs) — that generated OpenAPI document is the
 contract the mobile app is built against.
@@ -144,6 +157,8 @@ greetings/
 - `bun run db:migrate`: Run database migrations
 - `bun run db:migrate:test`: Run migrations against the test database
 - `bun run db:seed`: Seed reference data and the bootstrap super admin
+- `bun run db:seed:demo`: Seed a sample dataset for a fresh environment (never in production)
+- `bun run jobs nightly`: Run the daily rollup and cleanup — schedule this
 - `bun run db:studio`: Open database studio UI
 - `bun run check`: Run Biome formatting and linting
 - `bun run docker:build`: Build the Docker Compose images

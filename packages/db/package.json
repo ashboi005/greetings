@@ -18,7 +18,8 @@
 		"db:studio": "drizzle-kit studio",
 		"db:migrate": "drizzle-kit migrate",
 		"db:migrate:test": "drizzle-kit migrate --config drizzle.test.config.ts",
-		"db:seed": "bun run src/seed/run.ts"
+		"db:seed": "bun run src/seed/run.ts",
+		"db:seed:demo": "bun run src/seed/demo-run.ts"
 	},
 	"dependencies": {
 		"@greetings/env": "workspace:*",

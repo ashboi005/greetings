@@ -1,5 +1,6 @@
 import { REPORT_REASONS } from "@greetings/db/schema";
 import { Elysia, t } from "elysia";
+import { errorResponse, reportResponse } from "../../lib/responses";
 import { authGuard, requireUser } from "../auth/session";
 import { listOpenReports, resolveReport, submitReport } from "./reports";
 
@@ -30,6 +31,13 @@ export function moderationRoutes() {
 					reason: t.UnionEnum(REPORT_REASONS),
 					note: t.Optional(t.String({ maxLength: 1000 })),
 				}),
+				response: {
+					200: reportResponse,
+					401: errorResponse,
+					404: errorResponse,
+					409: errorResponse,
+					429: errorResponse,
+				},
 				detail: {
 					tags: ["Feed"],
 					summary: "Report content as inappropriate",
