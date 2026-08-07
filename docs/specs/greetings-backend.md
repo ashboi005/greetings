@@ -433,6 +433,33 @@ endpoint: "https://<account>.r2.cloudflarestorage.com", region: "auto" })`. Pres
 computation, so `test/storage.test.ts` exercises the real adapter with throwaway credentials while
 every other test uses the in-memory fake.
 
+## 14d. Constraints discovered while building M4
+
+**`similarity(title, q) > 0.25` cannot use a trigram index; `title % q` can.** Written the first
+way, the fuzzy fallback seq-scans every published row — confirmed with EXPLAIN, and 8× slower than
+the index path on 20k rows (98ms against 12ms). The operator uses `pg_trgm`'s default threshold of
+0.3; `similarity()` is still fine for *ranking* the rows the operator admits, because by then the
+set is small.
+
+**Drizzle's `sql` template flattens interpolated arrays.** `ANY(${codes})` reaches Postgres as a
+scalar and fails with *malformed array literal*. Use `sql.param(codes)` to bind one parameter, and
+cast it — `ANY(${sql.param(codes)}::text[])`.
+
+**Bind numeric constants with `sql.raw`, not as parameters.** A bound `1.5` sitting beside a `CASE
+… THEN 1 ELSE 0 END` makes Postgres infer `integer` and reject it outright. The scoring weights are
+compile-time constants, so `sql.raw(String(value))` is both correct and more readable in logs.
+
+**Order search by rank *then recency*.** With no search term every rank is 0, so a sort of
+`rank DESC, id DESC` returns an arbitrary slice rather than the newest content — and browsing with
+filters but no query is a first-class case for this audience.
+
+**Backticks inside a SQL comment terminate the template literal.** Obvious in hindsight, invisible
+in the error message.
+
+Measured plans at 20k rows: the feed page uses `content_feed_idx` (index scan, 0.24ms). Full-text
+and trigram predicates fall back to sequential scans only when a query matches a large fraction of
+the table, which is the planner making the right call rather than a missing index.
+
 ---
 
 ## 15. Milestones
@@ -443,7 +470,7 @@ every other test uses the in-memory fake.
 | **M1** | Postgres compose, test harness, configurable port, OpenAPI at `/docs`, error envelope, cursor helpers, CI | Server boots, `/docs` renders, tests run against real Postgres — **done** |
 | **M2** | Roles, Firebase exchange, `requireRole`, role invites, onboarding, region/language seeds | A Firebase token yields a session; a `user` is rejected from designer routes — **done** |
 | **M3** | Tags, R2 upload, lifecycle state machine, admin review | A designer takes an image from draft to published via admin approval — **done** |
-| **M4** | Feed scoring, stable cursor, search indexes | Two users in different regions get different feeds; paging has no gaps |
+| **M4** | Feed scoring, stable cursor, search indexes | Two users in different regions get different feeds; paging has no gaps — **done** |
 | **M5** | Tracked downloads, idempotency, signed URLs | A download is attributed to the right designer and region |
 | **M6** | Reports, auto-hold threshold, admin resolution | 5 reports pull an item from the feed |
 | **M7** | Analytics endpoints, nightly rollup job | Rollup totals equal a live aggregation |

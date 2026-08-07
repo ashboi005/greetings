@@ -28,9 +28,7 @@ describe("R2 presigning", () => {
 
 		const parsed = new URL(url);
 		expect(parsed.host).toBe("test-account.r2.cloudflarestorage.com");
-		expect(parsed.pathname).toBe(
-			"/greetings-content/content/abc/image.jpg",
-		);
+		expect(parsed.pathname).toBe("/greetings-content/content/abc/image.jpg");
 		expect(parsed.searchParams.get("X-Amz-Algorithm")).toBe("AWS4-HMAC-SHA256");
 		expect(parsed.searchParams.get("X-Amz-Expires")).toBe("900");
 		expect(parsed.searchParams.get("X-Amz-Signature")).toBeTruthy();
@@ -81,8 +79,8 @@ describe("requireObjectStorage", () => {
 	});
 
 	test("fails when only some credentials are present", () => {
-		expect(() =>
-			requireObjectStorage({ accountId: "a", bucket: "b" }),
-		).toThrow(AppError);
+		expect(() => requireObjectStorage({ accountId: "a", bucket: "b" })).toThrow(
+			AppError,
+		);
 	});
 });

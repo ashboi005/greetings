@@ -78,6 +78,18 @@ const ENDPOINTS: GuardedEndpoint[] = [
 		allowed: ["super_admin"],
 		call: (token) => api.get("/v1/admin/roles/invites", { token }),
 	},
+	// --- Feed and search (M4) — any signed-in user ---
+	{
+		name: "GET /v1/feed",
+		allowed: ALL_ROLES,
+		call: (token) => api.get("/v1/feed", { token }),
+	},
+	{
+		name: "GET /v1/search",
+		allowed: ALL_ROLES,
+		call: (token) => api.get("/v1/search?q=test", { token }),
+	},
+
 	// --- Designer content (M3) ---
 	{
 		name: "POST /v1/designer/content",

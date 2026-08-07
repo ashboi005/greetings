@@ -22,6 +22,13 @@
 			"when": 1786136941491,
 			"tag": "0002_thankful_aaron_stack",
 			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "7",
+			"when": 1786137803811,
+			"tag": "0003_far_the_renegades",
+			"breakpoints": true
 		}
 	]
 }

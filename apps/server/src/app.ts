@@ -12,6 +12,7 @@ import { adminRoleRoutes } from "./modules/admin/roles";
 import { authRoutes } from "./modules/auth/routes";
 import { adminContentRoutes } from "./modules/content/admin-routes";
 import { designerContentRoutes } from "./modules/content/designer-routes";
+import { feedRoutes } from "./modules/feed/routes";
 import { profileRoutes } from "./modules/profile/routes";
 
 /**
@@ -125,6 +126,7 @@ export function createApp(options: AppOptions = {}) {
 			.use(adminRoleRoutes())
 			.use(designerContentRoutes(getStorage))
 			.use(adminContentRoutes())
+			.use(feedRoutes())
 			// Registered last so earlier routes win; this catches only genuinely
 			// unmatched paths. A real route rather than the NOT_FOUND branch of
 			// onError because the evlog plugin drops the body of that response,
