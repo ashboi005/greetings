@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "scheme": "greetings",
+    "userInterfaceStyle": "automatic",
+    "orientation": "default",
+    "web": {
+      "bundler": "metro"
+    },
+    "name": "greetings",
+    "slug": "greetings",
+    "plugins": ["expo-font"],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
