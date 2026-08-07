@@ -1,25 +1,25 @@
 {
-  "name": "@greetings/auth",
-  "type": "module",
-  "exports": {
-    ".": {
-      "default": "./src/index.ts"
-    },
-    "./*": {
-      "default": "./src/*.ts"
-    }
-  },
-  "scripts": {},
-  "dependencies": {
-    "@better-auth/expo": "catalog:",
-    "@greetings/db": "workspace:*",
-    "@greetings/env": "workspace:*",
-    "better-auth": "catalog:",
-    "dotenv": "catalog:",
-    "zod": "catalog:"
-  },
-  "devDependencies": {
-    "@greetings/config": "workspace:*",
-    "typescript": "^6.0.3"
-  }
+	"name": "@greetings/auth",
+	"type": "module",
+	"exports": {
+		".": {
+			"default": "./src/index.ts"
+		},
+		"./*": {
+			"default": "./src/*.ts"
+		}
+	},
+	"scripts": {},
+	"dependencies": {
+		"@better-auth/expo": "catalog:",
+		"@greetings/db": "workspace:*",
+		"@greetings/env": "workspace:*",
+		"better-auth": "catalog:",
+		"dotenv": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@greetings/config": "workspace:*",
+		"typescript": "^6.0.3"
+	}
 }
