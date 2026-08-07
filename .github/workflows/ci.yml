@@ -63,6 +63,11 @@ jobs:
       - name: Apply migrations
         run: bun run db:migrate:test
 
+      # Not needed by the suite, which seeds its own reference data, but running
+      # it here means a broken seed script fails CI instead of a deploy.
+      - name: Seed reference data
+        run: bun run db:seed
+
       - name: Test
         run: bun run test
 
