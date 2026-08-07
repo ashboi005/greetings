@@ -10,7 +10,12 @@ import {
 } from "@greetings/db/schema";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { Elysia, t } from "elysia";
-import { badRequest, conflict, notFound } from "../../lib/errors";
+import {
+	badRequest,
+	conflict,
+	isUniqueViolation,
+	notFound,
+} from "../../lib/errors";
 import { authGuard, requireUser } from "../auth/session";
 
 /**
@@ -206,27 +211,4 @@ async function applyRoleChange(
 		// expired, which is the whole point of demoting someone.
 		await tx.delete(session).where(eq(session.userId, target.id));
 	});
-}
-
-/**
- * Detects Postgres unique-violation (SQLSTATE 23505).
- *
- * Drizzle wraps driver errors, so the pg error carrying `code` sits somewhere
- * down the `cause` chain rather than on the thrown object.
- */
-function isUniqueViolation(cause: unknown): boolean {
-	let current = cause;
-
-	for (let depth = 0; current && depth < 5; depth++) {
-		if (
-			typeof current === "object" &&
-			"code" in current &&
-			(current as { code?: string }).code === "23505"
-		) {
-			return true;
-		}
-		current = (current as { cause?: unknown }).cause;
-	}
-
-	return false;
 }

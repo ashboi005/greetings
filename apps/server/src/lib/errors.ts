@@ -77,3 +77,30 @@ export const notFound = (message = "Not found") =>
 	new AppError("NOT_FOUND", message);
 export const conflict = (message: string, details?: unknown) =>
 	new AppError("CONFLICT", message, details);
+export const tooManyRequests = (message = "Too many requests") =>
+	new AppError("RATE_LIMITED", message);
+
+/**
+ * Detects a Postgres unique violation (SQLSTATE 23505).
+ *
+ * Drizzle wraps driver errors, so the pg error carrying `code` sits somewhere
+ * down the `cause` chain rather than on the thrown object. Code that maps a
+ * constraint violation to 409 must walk the chain, or the violation escapes as
+ * a 500.
+ */
+export function isUniqueViolation(cause: unknown): boolean {
+	let current = cause;
+
+	for (let depth = 0; current && depth < 5; depth++) {
+		if (
+			typeof current === "object" &&
+			"code" in current &&
+			(current as { code?: string }).code === "23505"
+		) {
+			return true;
+		}
+		current = (current as { cause?: unknown }).cause;
+	}
+
+	return false;
+}

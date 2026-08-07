@@ -94,6 +94,31 @@ const ENDPOINTS: GuardedEndpoint[] = [
 		allowed: ALL_ROLES,
 		call: (token) => api.post("/v1/content/nope/download", { token, body: {} }),
 	},
+	{
+		name: "POST /v1/content/:id/report",
+		allowed: ALL_ROLES,
+		call: (token) =>
+			api.post("/v1/content/nope/report", {
+				token,
+				body: { reason: "spam" },
+			}),
+	},
+
+	// --- Moderation queue (M6) ---
+	{
+		name: "GET /v1/admin/reports",
+		allowed: ["admin", "super_admin"],
+		call: (token) => api.get("/v1/admin/reports", { token }),
+	},
+	{
+		name: "POST /v1/admin/reports/:id/resolve",
+		allowed: ["admin", "super_admin"],
+		call: (token) =>
+			api.post("/v1/admin/reports/nope/resolve", {
+				token,
+				body: { action: "keep" },
+			}),
+	},
 
 	// --- Designer content (M3) ---
 	{

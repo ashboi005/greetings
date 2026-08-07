@@ -1,7 +1,17 @@
-import { relations } from "drizzle-orm";
-import { index, pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+import {
+	index,
+	pgEnum,
+	pgTable,
+	text,
+	timestamp,
+	uniqueIndex,
+} from "drizzle-orm/pg-core";
 import { user, userRoleEnum } from "./auth";
 import { content } from "./content";
+
+/** Partial-index predicate: only reports still awaiting an admin decision. */
+const sqlOpenReports = sql`status = 'open'`;
 
 /**
  * Audit trail for privileged actions (spec §4.4).
@@ -32,6 +42,84 @@ export const roleChangeLog = pgTable(
 		index("role_change_log_created_at_idx").on(table.createdAt),
 	],
 );
+
+/**
+ * User reports of inappropriate content (spec §4.4, §10).
+ *
+ * Reports are the only signal the platform has from the people actually
+ * looking at the content, so the flow is deliberately low-friction: a reason
+ * from a short list, and an optional note.
+ */
+export const reportReasonEnum = pgEnum("report_reason", [
+	"inappropriate",
+	"copyright",
+	"spam",
+	"wrong_info",
+	"other",
+]);
+
+export const REPORT_REASONS = reportReasonEnum.enumValues;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+
+export const reportStatusEnum = pgEnum("report_status", [
+	"open",
+	"resolved_kept",
+	"resolved_removed",
+]);
+
+export const REPORT_STATUSES = reportStatusEnum.enumValues;
+export type ReportStatus = (typeof REPORT_STATUSES)[number];
+
+export const reports = pgTable(
+	"reports",
+	{
+		id: text("id").primaryKey(),
+		contentId: text("content_id")
+			.notNull()
+			.references(() => content.id, { onDelete: "cascade" }),
+		reporterId: text("reporter_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		reason: reportReasonEnum("reason").notNull(),
+		note: text("note"),
+		status: reportStatusEnum("status").default("open").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+		resolvedAt: timestamp("resolved_at"),
+		resolvedBy: text("resolved_by").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		resolutionNote: text("resolution_note"),
+	},
+	(table) => [
+		// One *open* report per person per item. Partial rather than total, so
+		// the same user may report again after a previous report was resolved —
+		// content that was kept can still deteriorate, or be re-reported for a
+		// different reason.
+		uniqueIndex("reports_one_open_per_reporter_idx")
+			.on(table.contentId, table.reporterId)
+			.where(sqlOpenReports),
+		// Drives the admin queue: open reports, worst first.
+		index("reports_status_created_idx").on(table.status, table.createdAt),
+		index("reports_content_idx").on(table.contentId, table.status),
+	],
+);
+
+export const reportRelations = relations(reports, ({ one }) => ({
+	content: one(content, {
+		fields: [reports.contentId],
+		references: [content.id],
+	}),
+	reporter: one(user, {
+		fields: [reports.reporterId],
+		references: [user.id],
+		relationName: "reportReporter",
+	}),
+	resolver: one(user, {
+		fields: [reports.resolvedBy],
+		references: [user.id],
+		relationName: "reportResolver",
+	}),
+}));
 
 /**
  * Every lifecycle move, recorded (spec §5).
