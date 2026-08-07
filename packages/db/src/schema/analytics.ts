@@ -1,9 +1,12 @@
 import { relations } from "drizzle-orm";
 import {
 	bigserial,
+	date,
 	index,
+	integer,
 	pgEnum,
 	pgTable,
+	primaryKey,
 	text,
 	timestamp,
 	uniqueIndex,
@@ -61,6 +64,48 @@ export const downloadEvents = pgTable(
 		index("download_events_created_at_idx").on(table.createdAt),
 	],
 );
+
+/**
+ * Pre-aggregated daily download counts (spec §4.5, §9).
+ *
+ * Analytics read this for every date before today and aggregate
+ * `download_events` live for today only, so a dashboard never scans the full
+ * event history. The grain is (date, content, region) because region is the
+ * finest breakdown the product asks for; anything coarser is a further
+ * aggregation of these rows.
+ *
+ * `designerId` rides along denormalised for the same reason it does on the
+ * events: per-designer analytics then never join.
+ */
+export const dailyContentStats = pgTable(
+	"daily_content_stats",
+	{
+		statDate: date("stat_date").notNull(),
+		contentId: text("content_id")
+			.notNull()
+			.references(() => content.id, { onDelete: "cascade" }),
+		designerId: text("designer_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		// Empty string, not null, for downloads by users who never onboarded:
+		// a nullable column cannot carry a primary key, and losing those rows
+		// would make the rollup disagree with the raw events.
+		regionCode: text("region_code").notNull(),
+		downloads: integer("downloads").notNull(),
+		uniqueUsers: integer("unique_users").notNull(),
+		computedAt: timestamp("computed_at").defaultNow().notNull(),
+	},
+	(table) => [
+		primaryKey({
+			columns: [table.statDate, table.contentId, table.regionCode],
+		}),
+		index("daily_stats_designer_idx").on(table.designerId, table.statDate),
+		index("daily_stats_date_idx").on(table.statDate),
+	],
+);
+
+/** Stands in for a null region in the rollup's primary key. */
+export const UNKNOWN_REGION = "";
 
 /**
  * Idempotency records for downloads (spec §8).

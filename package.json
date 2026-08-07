@@ -41,6 +41,7 @@
 		"db:migrate": "bun run --filter @greetings/db db:migrate",
 		"db:migrate:test": "bun run --filter @greetings/db db:migrate:test",
 		"db:seed": "bun run --filter @greetings/db db:seed",
+		"jobs": "bun run --filter server jobs",
 		"docker:build": "docker compose build",
 		"docker:up": "docker compose up -d --build",
 		"docker:down": "docker compose down",

@@ -9,6 +9,7 @@ import { errorHandler } from "./lib/error-plugin";
 import { type ObjectStorage, requireObjectStorage } from "./lib/storage";
 import type { TokenVerifier } from "./lib/token-verifier";
 import { adminRoleRoutes } from "./modules/admin/roles";
+import { analyticsRoutes } from "./modules/analytics/routes";
 import { authRoutes } from "./modules/auth/routes";
 import { adminContentRoutes } from "./modules/content/admin-routes";
 import { designerContentRoutes } from "./modules/content/designer-routes";
@@ -131,6 +132,7 @@ export function createApp(options: AppOptions = {}) {
 			.use(feedRoutes())
 			.use(downloadRoutes(getStorage))
 			.use(moderationRoutes())
+			.use(analyticsRoutes())
 			// Registered last so earlier routes win; this catches only genuinely
 			// unmatched paths. A real route rather than the NOT_FOUND branch of
 			// onError because the evlog plugin drops the body of that response,

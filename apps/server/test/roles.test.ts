@@ -104,6 +104,53 @@ const ENDPOINTS: GuardedEndpoint[] = [
 			}),
 	},
 
+	// --- Analytics (M7) ---
+	{
+		name: "GET /v1/designer/analytics/summary",
+		allowed: ["designer"],
+		call: (token) => api.get("/v1/designer/analytics/summary", { token }),
+	},
+	{
+		name: "GET /v1/designer/analytics/by-content",
+		allowed: ["designer"],
+		call: (token) => api.get("/v1/designer/analytics/by-content", { token }),
+	},
+	{
+		name: "GET /v1/designer/analytics/by-region",
+		allowed: ["designer"],
+		call: (token) => api.get("/v1/designer/analytics/by-region", { token }),
+	},
+	{
+		name: "GET /v1/designer/analytics/timeseries",
+		allowed: ["designer"],
+		call: (token) => api.get("/v1/designer/analytics/timeseries", { token }),
+	},
+	{
+		name: "GET /v1/admin/analytics/overview",
+		allowed: ["super_admin"],
+		call: (token) => api.get("/v1/admin/analytics/overview", { token }),
+	},
+	{
+		name: "GET /v1/admin/analytics/by-designer",
+		allowed: ["super_admin"],
+		call: (token) => api.get("/v1/admin/analytics/by-designer", { token }),
+	},
+	{
+		name: "GET /v1/admin/analytics/by-content",
+		allowed: ["super_admin"],
+		call: (token) => api.get("/v1/admin/analytics/by-content", { token }),
+	},
+	{
+		name: "GET /v1/admin/analytics/by-region",
+		allowed: ["super_admin"],
+		call: (token) => api.get("/v1/admin/analytics/by-region", { token }),
+	},
+	{
+		name: "GET /v1/admin/analytics/timeseries",
+		allowed: ["super_admin"],
+		call: (token) => api.get("/v1/admin/analytics/timeseries", { token }),
+	},
+
 	// --- Moderation queue (M6) ---
 	{
 		name: "GET /v1/admin/reports",

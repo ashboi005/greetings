@@ -497,7 +497,7 @@ replay window — so they double as a short trail when diagnosing a client's ret
 | **M4** | Feed scoring, stable cursor, search indexes | Two users in different regions get different feeds; paging has no gaps — **done** |
 | **M5** | Tracked downloads, idempotency, signed URLs | A download is attributed to the right designer and region — **done** |
 | **M6** | Reports, auto-hold threshold, admin resolution | 5 reports pull an item from the feed — **done** |
-| **M7** | Analytics endpoints, nightly rollup job | Rollup totals equal a live aggregation |
+| **M7** | Analytics endpoints, nightly rollup job | Rollup totals equal a live aggregation — **done** |
 | **M8** | Rate limits, production Dockerfiles, seed data, OpenAPI handoff review | Full end-to-end walkthrough passes |
 
 Each milestone lands with its tests green before the next begins.
