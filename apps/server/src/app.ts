@@ -6,6 +6,10 @@ import { env } from "@greetings/env/server";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { errorHandler } from "./lib/error-plugin";
+import type { TokenVerifier } from "./lib/token-verifier";
+import { adminRoleRoutes } from "./modules/admin/roles";
+import { authRoutes } from "./modules/auth/routes";
+import { profileRoutes } from "./modules/profile/routes";
 
 /**
  * Builds the application without binding a port, so tests can drive it with
@@ -17,7 +21,12 @@ import { errorHandler } from "./lib/error-plugin";
  * test complete. Logging is therefore layered on in index.ts, which also keeps
  * this factory independent of any particular logging transport.
  */
-export function createApp() {
+export interface AppOptions {
+	/** Injected by tests so sign-in never calls Google. */
+	tokenVerifier?: TokenVerifier;
+}
+
+export function createApp(options: AppOptions = {}) {
 	return (
 		new Elysia()
 			.use(errorHandler)
@@ -90,6 +99,9 @@ export function createApp() {
 					},
 				},
 			)
+			.use(authRoutes(options.tokenVerifier))
+			.use(profileRoutes())
+			.use(adminRoleRoutes())
 			// Registered last so earlier routes win; this catches only genuinely
 			// unmatched paths. A real route rather than the NOT_FOUND branch of
 			// onError because the evlog plugin drops the body of that response,

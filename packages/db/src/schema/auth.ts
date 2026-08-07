@@ -1,5 +1,29 @@
 import { relations } from "drizzle-orm";
-import { boolean, index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+	boolean,
+	index,
+	pgEnum,
+	pgTable,
+	text,
+	timestamp,
+} from "drizzle-orm/pg-core";
+
+/**
+ * Who a user is allowed to be (spec §1.1).
+ *
+ * Mirrored in packages/auth as a Better Auth additional field declared
+ * `input: false`, so it can never be set from a client payload — only a super
+ * admin changes it, through the role-assignment endpoint.
+ */
+export const userRoleEnum = pgEnum("user_role", [
+	"user",
+	"designer",
+	"admin",
+	"super_admin",
+]);
+
+export const USER_ROLES = userRoleEnum.enumValues;
+export type UserRole = (typeof USER_ROLES)[number];
 
 export const user = pgTable("user", {
 	id: text("id").primaryKey(),
@@ -7,6 +31,7 @@ export const user = pgTable("user", {
 	email: text("email").notNull().unique(),
 	emailVerified: boolean("email_verified").default(false).notNull(),
 	image: text("image"),
+	role: userRoleEnum("role").default("user").notNull(),
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 	updatedAt: timestamp("updated_at")
 		.defaultNow()

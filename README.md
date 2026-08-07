@@ -36,8 +36,12 @@ cp apps/server/.env.example apps/server/.env   # then edit if 3000/5432 are take
 bun run db:up            # Postgres 18 in Docker: greetings + greetings_test
 bun run db:migrate       # apply migrations to the dev database
 bun run db:migrate:test  # and to the test database
+bun run db:seed          # regions, languages, and the bootstrap super admin
 bun run dev:server
 ```
+
+`db:seed` is idempotent, so it is safe to re-run after any migration. To grant yourself super admin,
+sign in once with Google, set `SUPER_ADMIN_EMAIL` in `apps/server/.env`, then re-run it.
 
 The API listens on `PORT` (default 3000). Interactive docs are at
 [http://localhost:3000/docs](http://localhost:3000/docs) — that generated OpenAPI document is the
@@ -139,6 +143,7 @@ greetings/
 - `bun run db:generate`: Generate a migration from schema changes
 - `bun run db:migrate`: Run database migrations
 - `bun run db:migrate:test`: Run migrations against the test database
+- `bun run db:seed`: Seed reference data and the bootstrap super admin
 - `bun run db:studio`: Open database studio UI
 - `bun run check`: Run Biome formatting and linting
 - `bun run docker:build`: Build the Docker Compose images

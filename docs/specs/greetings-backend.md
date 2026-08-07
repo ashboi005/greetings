@@ -332,8 +332,8 @@ Found while verifying the generated project. Each is addressed in the milestone 
 | ~~No test infrastructure or test database~~ — `greetings_test` + `bun:test` harness | done (M1) |
 | ~~Server port hardcoded to `3000`~~ — now `PORT` in `packages/env` | done (M1) |
 | ~~No OpenAPI plugin installed~~ — `@elysiajs/openapi` at `/docs` | done (M1) |
-| `emailAndPassword` enabled in `packages/auth/src/index.ts` — must be disabled | M2 |
-| `packages/db/src/schema/` contains only `auth.ts` | M2–M7 |
+| ~~`emailAndPassword` enabled in `packages/auth/src/index.ts`~~ — disabled | done (M2) |
+| `packages/db/src/schema/` still lacks the content and analytics tables | M3–M7 |
 
 ---
 
@@ -365,6 +365,26 @@ suite silently reported double the tests. `emitDeclarationOnly: true` in
 `/var/lib/postgresql`, not `/var/lib/postgresql/data`; the old path makes the container
 restart-loop.
 
+## 14b. Constraints discovered while building M2
+
+**An unverified email is not an identity.** Sign-in links accounts by email only when the provider
+reports it verified — otherwise anyone able to type an address could claim the matching account.
+The same rule governs *writing* `user.email`: that column is unique, so storing an address is itself
+an identity claim. An unverified address is therefore replaced by a
+`<firebase-subject>@firebase.placeholder` value, which also avoids a unique-constraint 500 when the
+real owner already has an account. A test asserts both halves; do not relax either.
+
+**Roles are read from the database on every request, never from the session.** A session issued
+before a role change would otherwise keep its old privileges until expiry, so revocation would not
+take effect. `resolveCurrentUser` costs one indexed lookup per request and makes changes immediate.
+
+**Drizzle wraps driver errors.** A Postgres unique violation does not arrive with `code` on the
+thrown object — SQLSTATE `23505` sits somewhere down the `cause` chain. Code that maps constraint
+violations to `409 CONFLICT` must walk that chain, or the violation surfaces as a 500.
+
+**`role` carries `input: false` in the Better Auth config.** Without it, a sign-up payload could
+name its own role. This is the security boundary of the entire role system.
+
 ---
 
 ## 15. Milestones
@@ -373,7 +393,7 @@ restart-loop.
 |---|---|---|
 | **M0** | Scaffold, spec committed | `bun install` and `check-types` pass — **done** |
 | **M1** | Postgres compose, test harness, configurable port, OpenAPI at `/docs`, error envelope, cursor helpers, CI | Server boots, `/docs` renders, tests run against real Postgres — **done** |
-| **M2** | Roles, Firebase exchange, `requireRole`, role invites, onboarding, region/language seeds | A Firebase token yields a session; a `user` is rejected from designer routes |
+| **M2** | Roles, Firebase exchange, `requireRole`, role invites, onboarding, region/language seeds | A Firebase token yields a session; a `user` is rejected from designer routes — **done** |
 | **M3** | Tags, R2 upload, lifecycle state machine, admin review | A designer takes an image from draft to published via admin approval |
 | **M4** | Feed scoring, stable cursor, search indexes | Two users in different regions get different feeds; paging has no gaps |
 | **M5** | Tracked downloads, idempotency, signed URLs | A download is attributed to the right designer and region |

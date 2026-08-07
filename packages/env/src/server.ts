@@ -12,6 +12,19 @@ export const env = createEnv({
 		BETTER_AUTH_URL: z.url(),
 		CORS_ORIGIN: z.url(),
 		PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+
+		// Verifies mobile sign-in tokens. Optional so the server still boots for
+		// local work that does not touch mobile auth; POST /v1/auth/firebase
+		// fails with a clear message when it is missing.
+		FIREBASE_PROJECT_ID: z.string().min(1).optional(),
+
+		// Web sign-in for designers, admins and super admins. Optional for the
+		// same reason: the Google provider is registered only when both are set.
+		GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+		GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+
+		// Email granted super_admin by `bun run seed:super-admin`.
+		SUPER_ADMIN_EMAIL: z.email().optional(),
 		NODE_ENV: z
 			.enum(["development", "production", "test"])
 			.default("development"),
