@@ -12,7 +12,12 @@ import type { UserRole } from "@greetings/db/schema";
 import { createApp } from "../src/app";
 import { truncateAll } from "./db";
 import { fakeTokenVerifier } from "./fakes";
-import { client, seedReference, setRole, type TestResponse } from "./helpers";
+import {
+	authHelper,
+	client,
+	seedReference,
+	type TestResponse,
+} from "./helpers";
 
 const firebase = fakeTokenVerifier();
 const app = createApp({ tokenVerifier: firebase.verifier });
@@ -20,18 +25,12 @@ const api = client(app);
 
 const ALL_ROLES: UserRole[] = ["user", "designer", "admin", "super_admin"];
 
-/** Signs in a user and forces them to `role`, returning a session token. */
-async function sessionFor(role: UserRole, seq: number): Promise<string> {
-	const token = `role-${role}-${seq}`;
-	firebase.register(token, {
-		subject: `uid-${role}-${seq}`,
-		phone: `+9198765${String(seq).padStart(5, "0")}`,
-	});
-	const res = await api.post("/v1/auth/firebase", { body: { idToken: token } });
-	expect(res.status).toBe(200);
+const auth = authHelper(api, firebase);
 
-	const session = res.body as { token: string; user: { id: string } };
-	if (role !== "user") await setRole(session.user.id, role);
+/** Signs in a user carrying `role`, returning their session token. */
+async function sessionFor(role: UserRole): Promise<string> {
+	const session = await auth.signIn({ role });
+	expect(session.role).toBe(role);
 	return session.token;
 }
 
@@ -100,14 +99,12 @@ describe("authentication is required", () => {
 });
 
 describe("role matrix", () => {
-	let seq = 0;
-
 	for (const endpoint of ENDPOINTS) {
 		for (const role of ALL_ROLES) {
 			const permitted = endpoint.allowed.includes(role);
 
 			test(`${endpoint.name} ${permitted ? "allows" : "forbids"} ${role}`, async () => {
-				const token = await sessionFor(role, ++seq);
+				const token = await sessionFor(role);
 				const res = await endpoint.call(token);
 
 				if (permitted) {

@@ -2,6 +2,7 @@ import { db } from "@greetings/db";
 import {
 	roleChangeLog,
 	roleInvites,
+	session,
 	USER_ROLES,
 	type UserRole,
 	userProfiles,
@@ -197,6 +198,13 @@ async function applyRoleChange(
 			reason,
 			createdAt: new Date(),
 		});
+
+		// Authorisation reads the role from the session payload, so sessions
+		// issued before this change still carry the old role. Deleting them
+		// forces the next request to re-authenticate against the new role —
+		// without this, a demotion would not take effect until the session
+		// expired, which is the whole point of demoting someone.
+		await tx.delete(session).where(eq(session.userId, target.id));
 	});
 }
 

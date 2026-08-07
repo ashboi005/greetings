@@ -374,9 +374,31 @@ an identity claim. An unverified address is therefore replaced by a
 `<firebase-subject>@firebase.placeholder` value, which also avoids a unique-constraint 500 when the
 real owner already has an account. A test asserts both halves; do not relax either.
 
-**Roles are read from the database on every request, never from the session.** A session issued
-before a role change would otherwise keep its old privileges until expiry, so revocation would not
-take effect. `resolveCurrentUser` costs one indexed lookup per request and makes changes immediate.
+**Roles come from the session, not a separate query.** `auth.api.getSession()` already returns the
+user with `role` on it, so the extra lookup that used to follow it was pure waste. Authorisation now
+reads `session.user.role`.
+
+Two facts govern how this behaves, and they are easy to get wrong:
+
+- **Better Auth's session token is not a JWT.** It is a signed *opaque* token used as a database
+  lookup key. There is no claim to read statelessly by default. Each `getSession()` is two
+  queries — the session row, then the user row.
+- **`session.cookieCache` is the stateless path**, and it is enabled with `strategy: "jwt"` and a
+  five-minute TTL. It applies to cookie-bearing web requests only; mobile clients send a bearer
+  token and no cookie jar, so they still resolve through the database — where the user row is
+  re-read, meaning their role is always current.
+
+Because a cached cookie can carry a stale role for up to its TTL, **every role change deletes the
+target's sessions**. A demotion therefore takes effect on the next request rather than whenever the
+session would have expired. Changing a role by writing to the database directly skips that, so
+privilege changes must go through the role-assignment endpoint.
+
+**Resolve the session once per request.** Both the authorisation guard (mounted by every route
+module) and the request logger need it. Left alone they each pay for their own lookup: measured
+against a real server, one authenticated request issued six queries, then four. `getSessionOnce`
+memoises on the Request object and brings it to two — and to zero for a web request served from the
+cookie cache. Note evlog's `createAuthMiddleware` resolves its own session; pass an
+already-resolved one to `identifyUser` instead.
 
 **Drizzle wraps driver errors.** A Postgres unique violation does not arrive with `code` on the
 thrown object — SQLSTATE `23505` sits somewhere down the `cause` chain. Code that maps constraint

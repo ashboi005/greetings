@@ -47,6 +47,26 @@ export function createAuth() {
 					},
 				}
 			: {},
+		session: {
+			// Better Auth's session token is an opaque database key, not a JWT, so
+			// every getSession() would otherwise be a query. The cookie cache
+			// stores the session and user — including `role` — in a short-lived
+			// signed cookie, encoded as a JWT, letting a web request authorise
+			// without touching the database.
+			//
+			// The trade: a role change is invisible to a cached cookie until it
+			// expires. Role changes revoke the target's sessions, so this five
+			// minutes is the entire window, not the session lifetime.
+			//
+			// Note this is a cookie, so it applies to the web panels. Mobile
+			// clients send a bearer token and no cookie jar, so they still
+			// resolve through the database.
+			cookieCache: {
+				enabled: true,
+				maxAge: 5 * 60,
+				strategy: "jwt",
+			},
+		},
 		user: {
 			additionalFields: {
 				role: {

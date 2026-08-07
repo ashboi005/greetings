@@ -4,22 +4,20 @@ import { eq } from "drizzle-orm";
 import { createApp } from "../src/app";
 import { testDb, truncateAll } from "./db";
 import { fakeTokenVerifier } from "./fakes";
-import { client, seedReference, setRole } from "./helpers";
+import { authHelper, client, seedReference } from "./helpers";
 
 const firebase = fakeTokenVerifier();
 const app = createApp({ tokenVerifier: firebase.verifier });
 const api = client(app);
 
+const auth = authHelper(api, firebase);
+
 let seq = 0;
+
+/** A plain signed-in user; most profile tests need nothing more. */
 async function signIn(overrides: Record<string, unknown> = {}) {
-	const token = `profile-${++seq}`;
-	firebase.register(token, {
-		subject: `uid-profile-${seq}`,
-		phone: `+9199999${String(seq).padStart(5, "0")}`,
-		...overrides,
-	});
-	const res = await api.post("/v1/auth/firebase", { body: { idToken: token } });
-	return res.body as { token: string; user: { id: string } };
+	const session = await auth.signIn(overrides);
+	return { token: session.token, user: { id: session.userId } };
 }
 
 beforeEach(async () => {
@@ -169,17 +167,20 @@ describe("onboarding", () => {
 });
 
 describe("role assignment", () => {
-	/** Returns the session together with the email it was created under. */
+	/** Returns a super-admin session together with the email it was created under. */
 	async function superAdmin() {
-		const email = `boss${seq + 1}@example.com`;
-		const session = await signIn({ email, emailVerified: true });
-		await setRole(session.user.id, "super_admin");
-		return { ...session, email };
+		const email = `boss${++seq}@example.com`;
+		const session = await auth.signIn({
+			role: "super_admin",
+			email,
+			emailVerified: true,
+		});
+		return { ...session, email, user: { id: session.userId } };
 	}
 
-	test("applies immediately when the target already has an account", async () => {
+	test("applies to an existing account and invalidates its old sessions", async () => {
 		const boss = await superAdmin();
-		const target = await signIn({
+		const target = await auth.signIn({
 			email: "target@example.com",
 			emailVerified: true,
 		});
@@ -192,8 +193,40 @@ describe("role assignment", () => {
 		expect(res.status).toBe(200);
 		expect(res.body.applied).toBe(true);
 
-		const me = await api.get("/v1/auth/me", { token: target.token });
-		expect(me.body.role).toBe("designer");
+		// Authorisation reads the role from the session, so the change would be
+		// invisible to a session issued before it. Revoking the target's
+		// sessions is what makes the grant — and equally a demotion — take
+		// effect rather than waiting out the session lifetime.
+		const stale = await api.get("/v1/auth/me", { token: target.token });
+		expect(stale.status).toBe(401);
+
+		const fresh = await auth.reSignIn(target.identity);
+		expect(fresh.user.role).toBe("designer");
+	});
+
+	test("a demoted admin loses access as soon as they re-authenticate", async () => {
+		const boss = await superAdmin();
+		const rogue = await auth.signIn({
+			role: "admin",
+			email: "rogue@example.com",
+			emailVerified: true,
+		});
+
+		// Confirm the starting privilege is real.
+		const before = await api.get("/v1/auth/me", { token: rogue.token });
+		expect(before.body.role).toBe("admin");
+
+		await api.post("/v1/admin/roles/assign", {
+			token: boss.token,
+			body: { email: "rogue@example.com", role: "user" },
+		});
+
+		expect((await api.get("/v1/auth/me", { token: rogue.token })).status).toBe(
+			401,
+		);
+
+		const fresh = await auth.reSignIn(rogue.identity);
+		expect(fresh.user.role).toBe("user");
 	});
 
 	test("stores an invite when the target has no account yet", async () => {

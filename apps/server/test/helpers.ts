@@ -46,6 +46,78 @@ export interface TestResponse {
 	raw: string;
 }
 
+/**
+ * Signs users in at a chosen role.
+ *
+ * Roles are carried in the session payload, so forcing a role in the database
+ * does not change a session already issued. Arranging a privileged caller
+ * therefore means: sign in, set the role, then sign in again with the same
+ * Firebase subject to pick up a session that carries it. Encapsulated here so
+ * every test does it the same way.
+ */
+export function authHelper(
+	api: ReturnType<typeof client>,
+	firebase: {
+		register(token: string, identity?: Record<string, unknown>): string;
+	},
+) {
+	let seq = 0;
+
+	return {
+		async signIn(
+			options: {
+				role?: UserRole;
+				email?: string;
+				emailVerified?: boolean;
+				phone?: string;
+			} = {},
+		) {
+			const n = ++seq;
+			const identity = {
+				subject: `uid-${n}`,
+				phone: options.phone ?? `+9198765${String(n).padStart(5, "0")}`,
+				email: options.email,
+				emailVerified: options.emailVerified ?? Boolean(options.email),
+			};
+
+			firebase.register(`tok-${n}a`, identity);
+			let res = await api.post("/v1/auth/firebase", {
+				body: { idToken: `tok-${n}a` },
+			});
+
+			const userId = res.body.user.id as string;
+
+			if (options.role && options.role !== "user") {
+				await setRole(userId, options.role);
+				// Same subject, so this resolves to the same user — but the new
+				// session carries the updated role.
+				firebase.register(`tok-${n}b`, identity);
+				res = await api.post("/v1/auth/firebase", {
+					body: { idToken: `tok-${n}b` },
+				});
+			}
+
+			return {
+				token: res.body.token as string,
+				userId,
+				email: res.body.user.email as string,
+				role: res.body.user.role as UserRole,
+				identity,
+			};
+		},
+
+		/** Re-issues a session for an existing subject, picking up role changes. */
+		async reSignIn(identity: Record<string, unknown>) {
+			const token = `re-${++seq}`;
+			firebase.register(token, identity);
+			const res = await api.post("/v1/auth/firebase", {
+				body: { idToken: token },
+			});
+			return res.body as { token: string; user: { role: UserRole } };
+		},
+	};
+}
+
 /** Issues requests against a mounted app with optional auth. */
 export function client(app: { handle(req: Request): Promise<Response> }) {
 	const call = async (

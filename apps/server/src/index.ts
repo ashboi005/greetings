@@ -1,15 +1,12 @@
-import { auth } from "@greetings/auth";
 import { env } from "@greetings/env/server";
 import { Elysia } from "elysia";
 import { initLogger } from "evlog";
-import {
-	type BetterAuthInstance,
-	createAuthMiddleware,
-} from "evlog/better-auth";
+import { identifyUser } from "evlog/better-auth";
 import { evlog } from "evlog/elysia";
 import { createFsDrain } from "evlog/fs";
 import { createApp } from "./app";
 import { errorHandler } from "./lib/error-plugin";
+import { getSessionOnce } from "./modules/auth/session";
 
 /**
  * Production entrypoint: observability wrapped around the app.
@@ -23,11 +20,6 @@ initLogger({
 	env: { service: "greetings-server" },
 });
 
-const identifyUser = createAuthMiddleware(auth as BetterAuthInstance, {
-	exclude: ["/api/auth/**"],
-	maskEmail: true,
-});
-
 new Elysia()
 	// Also mounted here, not just inside createApp(): unmatched routes are
 	// handled by the outermost instance, so without this a 404 would escape as
@@ -39,7 +31,17 @@ new Elysia()
 		}),
 	)
 	.derive({ as: "global" }, async ({ request, log }) => {
-		await identifyUser(log, request.headers, new URL(request.url).pathname);
+		// Deliberately not evlog's createAuthMiddleware: that resolves the
+		// session itself, so logging silently doubled the auth cost of every
+		// request. `identifyUser` takes an already-resolved session, and
+		// getSessionOnce is shared with the authorisation guard — one lookup
+		// serves both.
+		if (!new URL(request.url).pathname.startsWith("/api/auth")) {
+			const session = await getSessionOnce(request);
+			// Anonymous requests have nothing to identify; the log still records
+			// the request itself.
+			if (session) identifyUser(log, session, { maskEmail: true });
+		}
 		return {};
 	})
 	.use(createApp())

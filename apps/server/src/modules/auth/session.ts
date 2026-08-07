@@ -7,9 +7,7 @@
  */
 
 import { auth } from "@greetings/auth";
-import { db } from "@greetings/db";
-import { type UserRole, user as userTable } from "@greetings/db/schema";
-import { eq } from "drizzle-orm";
+import { USER_ROLES, type UserRole } from "@greetings/db/schema";
 import { Elysia } from "elysia";
 import { forbidden, unauthenticated } from "../../lib/errors";
 
@@ -26,28 +24,72 @@ export interface CurrentUser {
  * Better Auth reads either the session cookie (web) or the bearer token
  * (mobile), so both front doors converge here.
  *
- * The role is read from the database rather than taken from the session
- * payload: a session issued before a role change would otherwise keep its old
- * privileges until it expired. Revocation has to be immediate.
+ * The role comes from the session payload, which already carries it as a
+ * Better Auth additional field — no second query. With `session.cookieCache`
+ * enabled (packages/auth) a web request resolves entirely from the signed
+ * cookie and touches no database at all.
+ *
+ * The cost is that a role change is not visible to sessions issued before it.
+ * `revokeUserSessions` closes that gap: every role change deletes the target's
+ * sessions, so the next request has to re-authenticate and picks up the new
+ * role. Staleness is therefore bounded by the cookie cache TTL, not by the
+ * session lifetime.
  */
+type BetterAuthSession = Awaited<ReturnType<typeof auth.api.getSession>>;
+
+/**
+ * Resolves the Better Auth session at most once per request.
+ *
+ * Each `getSession` is two queries (the session row, then the user row), and
+ * several things want the session on a single request: the authorisation
+ * guard, mounted by every route module, and the request logger. Without this
+ * they each pay for their own lookup. Keyed on the Request object, so entries
+ * are collected with it.
+ */
+const perRequest = new WeakMap<Request, Promise<BetterAuthSession>>();
+
+export function getSessionOnce(request: Request): Promise<BetterAuthSession> {
+	const cached = perRequest.get(request);
+	if (cached) return cached;
+
+	const pending = auth.api.getSession({ headers: request.headers });
+	perRequest.set(request, pending);
+	return pending;
+}
+
+export async function resolveCurrentUserOnce(
+	request: Request,
+): Promise<CurrentUser | null> {
+	return toCurrentUser(await getSessionOnce(request));
+}
+
 export async function resolveCurrentUser(
 	headers: Headers,
 ): Promise<CurrentUser | null> {
-	const session = await auth.api.getSession({ headers });
+	return toCurrentUser(await auth.api.getSession({ headers }));
+}
+
+function toCurrentUser(session: BetterAuthSession): CurrentUser | null {
 	if (!session?.user?.id) return null;
 
-	const [row] = await db
-		.select({
-			id: userTable.id,
-			email: userTable.email,
-			name: userTable.name,
-			role: userTable.role,
-		})
-		.from(userTable)
-		.where(eq(userTable.id, session.user.id))
-		.limit(1);
+	const { id, email, name, role } = session.user;
 
-	return row ?? null;
+	return {
+		id,
+		email,
+		name,
+		// Defensive: the column is an enum and the field is `input: false`, so
+		// an unknown value should be impossible. Failing closed to the least
+		// privileged role beats trusting an unrecognised string.
+		role: isUserRole(role) ? role : "user",
+	};
+}
+
+function isUserRole(value: unknown): value is UserRole {
+	return (
+		typeof value === "string" &&
+		(USER_ROLES as readonly string[]).includes(value)
+	);
 }
 
 /**
@@ -61,7 +103,7 @@ export async function resolveCurrentUser(
  */
 export const authGuard = new Elysia({ name: "auth-guard" })
 	.derive({ as: "global" }, async ({ request }) => ({
-		currentUser: await resolveCurrentUser(request.headers),
+		currentUser: await resolveCurrentUserOnce(request),
 	}))
 	.macro({
 		requireRole(allowed: UserRole[] | true) {

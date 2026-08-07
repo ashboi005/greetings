@@ -26,6 +26,31 @@ async function signIn(
 	};
 }
 
+/**
+ * Signs in as a super admin.
+ *
+ * Two sign-ins: the role is carried in the session payload, so promoting the
+ * user in the database only takes effect on a session issued afterwards.
+ */
+async function signInAsSuperAdmin(
+	base: string,
+	identity: Parameters<typeof firebase.register>[1] = {},
+) {
+	const first = await signIn(`${base}-1`, identity);
+	await setRole(first.user.id, "super_admin");
+
+	firebase.register(`${base}-2`, {
+		...identity,
+		subject: `firebase-uid-${base}-1`,
+	});
+	const res = await api.post("/v1/auth/firebase", {
+		body: { idToken: `${base}-2` },
+	});
+	expect(res.body.user.role).toBe("super_admin");
+
+	return res.body as { token: string; user: { id: string; role: string } };
+}
+
 beforeEach(async () => {
 	await truncateAll();
 	firebase.reset();
@@ -158,12 +183,19 @@ describe("GET /v1/auth/me", () => {
 		expect(res.status).toBe(401);
 	});
 
-	test("reflects a role change immediately, without a new sign-in", async () => {
+	test("a bearer session sees the current role, because session lookup joins the user row", async () => {
 		const session = await signIn("tok-role-change", { phone: "+919876500010" });
 
+		// Written straight to the database, bypassing the API and its session
+		// revocation — the harshest case for a session-carried role.
 		await setRole(session.user.id, "admin");
 
 		const me = await api.get("/v1/auth/me", { token: session.token });
+
+		// Bearer tokens resolve through a session lookup that joins `user`, so
+		// the role is read fresh without a second query of our own. The cookie
+		// cache, which can serve a stale role for up to its TTL, applies only to
+		// cookie-bearing web requests — mobile sends no cookie jar.
 		expect(me.body.role).toBe("admin");
 	});
 });
@@ -175,11 +207,10 @@ describe("role invites", () => {
 
 	test("a pending invite is applied at first sign-in", async () => {
 		// Arrange: a super admin who can issue the invite.
-		const boss = await signIn("tok-boss", {
+		const boss = await signInAsSuperAdmin("tok-boss", {
 			email: "boss@example.com",
 			emailVerified: true,
 		});
-		await setRole(boss.user.id, "super_admin");
 
 		const invite = await api.post("/v1/admin/roles/assign", {
 			token: boss.token,
@@ -204,11 +235,10 @@ describe("role invites", () => {
 	});
 
 	test("an invite by phone is applied to a phone sign-in", async () => {
-		const boss = await signIn("tok-boss-2", {
+		const boss = await signInAsSuperAdmin("tok-boss-2", {
 			email: "boss2@example.com",
 			emailVerified: true,
 		});
-		await setRole(boss.user.id, "super_admin");
 
 		await api.post("/v1/admin/roles/assign", {
 			token: boss.token,
@@ -222,11 +252,10 @@ describe("role invites", () => {
 	});
 
 	test("an invite is consumed once, not re-applied after a later demotion", async () => {
-		const boss = await signIn("tok-boss-3", {
+		const boss = await signInAsSuperAdmin("tok-boss-3", {
 			email: "boss3@example.com",
 			emailVerified: true,
 		});
-		await setRole(boss.user.id, "super_admin");
 
 		await api.post("/v1/admin/roles/assign", {
 			token: boss.token,
