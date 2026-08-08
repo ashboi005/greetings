@@ -77,6 +77,10 @@ export function fakeObjectStorage() {
 			return objects.get(key) ?? null;
 		},
 
+		async list(prefix) {
+			return [...objects.keys()].filter((key) => key.startsWith(prefix));
+		},
+
 		async delete(key) {
 			if (failDeletes) throw new Error("simulated storage failure");
 			objects.delete(key);

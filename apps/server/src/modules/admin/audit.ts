@@ -27,7 +27,11 @@ import { USER_ROLES } from "@greetings/db/schema";
 import { sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest, notFound } from "../../lib/errors";
-import { decodeCursor, encodeCursor } from "../../lib/pagination";
+import {
+	cursorTimestamp,
+	decodeCursor,
+	encodeCursor,
+} from "../../lib/pagination";
 import { optionalEnum } from "../../lib/schema";
 import { authGuard } from "../auth/session";
 
@@ -56,14 +60,14 @@ interface TimelineRow {
 }
 
 export function adminAuditRoutes() {
-	return (
-		new Elysia({ prefix: "/v1/admin" })
-			.use(authGuard)
+	return new Elysia({ prefix: "/v1/admin" })
+		.use(authGuard)
 
-			.get(
-				"/content/:id/audit",
-				async ({ params }) => {
-					const [item] = await db.execute(sql`
+		.get(
+			"/content/:id/audit",
+			async ({ params }) => {
+				const [item] = await db
+					.execute(sql`
 						SELECT
 							c.id,
 							c.title,
@@ -85,13 +89,15 @@ export function adminAuditRoutes() {
 						JOIN "user" d ON d.id = c.designer_id
 						LEFT JOIN "user" r ON r.id = c.reviewed_by
 						WHERE c.id = ${params.id}
-					`).then((result) => result.rows);
+					`)
+					.then((result) => result.rows);
 
-					if (!item) throw notFound("No such content.");
+				if (!item) throw notFound("No such content.");
 
-					// One query, four sources. Ordered by the database so the
-					// timeline cannot disagree with itself across page loads.
-					const timeline = await db.execute(sql`
+				// One query, four sources. Ordered by the database so the
+				// timeline cannot disagree with itself across page loads.
+				const timeline = await db
+					.execute(sql`
 						WITH entries AS (
 							-- Creation is not a moderation action, but "who made this"
 							-- is the first question anyone asks of an audit trail.
@@ -152,52 +158,53 @@ export function adminAuditRoutes() {
 						-- Newest first: an admin opening this is investigating what
 						-- just happened, not reading a biography from the start.
 						ORDER BY e.at DESC
-					`).then((result) => result.rows as unknown as TimelineRow[]);
+					`)
+					.then((result) => result.rows as unknown as TimelineRow[]);
 
-					return {
-						content: item,
-						timeline: timeline.map((row) => ({
-							kind: row.kind,
-							at: row.at,
-							// Null actor is the system acting on its own — the automatic
-							// hold once reports cross the threshold has no human behind it.
-							actor: row.actorId
-								? {
-										id: row.actorId,
-										name: row.actorName,
-										email: row.actorEmail,
-										role: row.actorRole,
-									}
-								: null,
-							reason: row.reason,
-							note: row.note,
-						})),
-					};
+				return {
+					content: item,
+					timeline: timeline.map((row) => ({
+						kind: row.kind,
+						at: row.at,
+						// Null actor is the system acting on its own — the automatic
+						// hold once reports cross the threshold has no human behind it.
+						actor: row.actorId
+							? {
+									id: row.actorId,
+									name: row.actorName,
+									email: row.actorEmail,
+									role: row.actorRole,
+								}
+							: null,
+						reason: row.reason,
+						note: row.note,
+					})),
+				};
+			},
+			{
+				requireRole: ["admin", "super_admin"],
+				detail: {
+					tags: ["Admin"],
+					summary: "Everything that ever happened to one piece of content",
+					description:
+						"Merges creation, every lifecycle move, every report and every " +
+						"report resolution into one timeline, newest first, with the " +
+						"person behind each. `actor` is null where the system acted on " +
+						"its own — currently only the automatic hold. Kinds: " +
+						TIMELINE_KINDS.join(", ") +
+						".",
 				},
-				{
-					requireRole: ["admin", "super_admin"],
-					detail: {
-						tags: ["Admin"],
-						summary: "Everything that ever happened to one piece of content",
-						description:
-							"Merges creation, every lifecycle move, every report and every " +
-							"report resolution into one timeline, newest first, with the " +
-							"person behind each. `actor` is null where the system acted on " +
-							"its own — currently only the automatic hold. Kinds: " +
-							TIMELINE_KINDS.join(", ") +
-							".",
-					},
-				},
-			)
+			},
+		)
 
-			.get(
-				"/audit/roles",
-				async ({ query }) => {
-					const limit = query.limit ?? 50;
-					const before = query.cursor ? decodeTimeCursor(query.cursor) : null;
+		.get(
+			"/audit/roles",
+			async ({ query }) => {
+				const limit = query.limit ?? 50;
+				const before = query.cursor ? decodeTimeCursor(query.cursor) : null;
 
-					const rows = (
-						await db.execute(sql`
+				const rows = (
+					await db.execute(sql`
 							SELECT
 								l.id,
 								l.created_at    AS "at",
@@ -221,50 +228,50 @@ export function adminAuditRoutes() {
 							ORDER BY l.created_at DESC, l.id DESC
 							LIMIT ${limit + 1}
 						`)
-					).rows as unknown as { id: string; at: Date }[];
+				).rows as unknown as { id: string; at: Date }[];
 
-					const page = rows.slice(0, limit);
-					const last = page.at(-1);
+				const page = rows.slice(0, limit);
+				const last = page.at(-1);
 
-					return {
-						items: page,
-						nextCursor:
-							rows.length > limit && last
-								? encodeCursor({
-										t: new Date(last.at).toISOString(),
-										i: last.id,
-									})
-								: null,
-					};
+				return {
+					items: page,
+					nextCursor:
+						rows.length > limit && last
+							? encodeCursor({
+									t: new Date(last.at).toISOString(),
+									i: last.id,
+								})
+							: null,
+				};
+			},
+			{
+				// Super admin only: this is the record of who handed out power,
+				// and the only person who can hand it out should be the one
+				// answerable for reading it.
+				requireRole: ["super_admin"],
+				query: t.Object({
+					cursor: t.Optional(t.String()),
+					limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
+				}),
+				detail: {
+					tags: ["Admin"],
+					summary: "Every role change ever made",
+					description:
+						"Newest first. `actor` is null for changes the system applied " +
+						"itself: the bootstrap super admin from the seed script, and " +
+						"role invites consumed at first sign-in.",
 				},
-				{
-					// Super admin only: this is the record of who handed out power,
-					// and the only person who can hand it out should be the one
-					// answerable for reading it.
-					requireRole: ["super_admin"],
-					query: t.Object({
-						cursor: t.Optional(t.String()),
-						limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
-					}),
-					detail: {
-						tags: ["Admin"],
-						summary: "Every role change ever made",
-						description:
-							"Newest first. `actor` is null for changes the system applied " +
-							"itself: the bootstrap super admin from the seed script, and " +
-							"role invites consumed at first sign-in.",
-					},
-				},
-			)
+			},
+		)
 
-			.get(
-				"/audit/actions",
-				async ({ query }) => {
-					const limit = query.limit ?? 50;
-					const before = query.cursor ? decodeTimeCursor(query.cursor) : null;
+		.get(
+			"/audit/actions",
+			async ({ query }) => {
+				const limit = query.limit ?? 50;
+				const before = query.cursor ? decodeTimeCursor(query.cursor) : null;
 
-					const rows = (
-						await db.execute(sql`
+				const rows = (
+					await db.execute(sql`
 							SELECT
 								ma.id,
 								ma.created_at   AS "at",
@@ -291,52 +298,52 @@ export function adminAuditRoutes() {
 							ORDER BY ma.created_at DESC, ma.id DESC
 							LIMIT ${limit + 1}
 						`)
-					).rows as unknown as { id: string; at: Date }[];
+				).rows as unknown as { id: string; at: Date }[];
 
-					const page = rows.slice(0, limit);
-					const last = page.at(-1);
+				const page = rows.slice(0, limit);
+				const last = page.at(-1);
 
-					return {
-						items: page,
-						nextCursor:
-							rows.length > limit && last
-								? encodeCursor({
-										t: new Date(last.at).toISOString(),
-										i: last.id,
-									})
-								: null,
-					};
+				return {
+					items: page,
+					nextCursor:
+						rows.length > limit && last
+							? encodeCursor({
+									t: new Date(last.at).toISOString(),
+									i: last.id,
+								})
+							: null,
+				};
+			},
+			{
+				requireRole: ["admin", "super_admin"],
+				query: t.Object({
+					action: optionalEnum(
+						["submit", "approve", "reject", "remove", "restore", "hold"],
+						{ description: "Filter to one kind of action" },
+					),
+					actorId: t.Optional(
+						t.String({ description: "Filter to one moderator" }),
+					),
+					cursor: t.Optional(t.String()),
+					limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
+				}),
+				detail: {
+					tags: ["Admin"],
+					summary: "Recent moderation activity across all content",
+					description:
+						"The platform-wide feed of approvals, rejections, removals and " +
+						"holds. Filter by `actorId` to review one moderator's decisions.",
 				},
-				{
-					requireRole: ["admin", "super_admin"],
-					query: t.Object({
-						action: optionalEnum(
-							["submit", "approve", "reject", "remove", "restore", "hold"],
-							{ description: "Filter to one kind of action" },
-						),
-						actorId: t.Optional(
-							t.String({ description: "Filter to one moderator" }),
-						),
-						cursor: t.Optional(t.String()),
-						limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
-					}),
-					detail: {
-						tags: ["Admin"],
-						summary: "Recent moderation activity across all content",
-						description:
-							"The platform-wide feed of approvals, rejections, removals and " +
-							"holds. Filter by `actorId` to review one moderator's decisions.",
-					},
-				},
-			)
+			},
+		)
 
-			.get(
-				"/users",
-				async ({ query }) => {
-					const limit = query.limit ?? 50;
-					const term = query.q?.trim();
+		.get(
+			"/users",
+			async ({ query }) => {
+				const limit = query.limit ?? 50;
+				const term = query.q?.trim();
 
-					const rows = await db.execute(sql`
+				const rows = await db.execute(sql`
 						SELECT
 							u.id,
 							u.name,
@@ -363,45 +370,45 @@ export function adminAuditRoutes() {
 						LIMIT ${limit}
 					`);
 
-					return rows.rows;
-				},
-				{
-					requireRole: ["admin", "super_admin"],
-					query: t.Object({
-						q: t.Optional(
-							t.String({
-								maxLength: 100,
-								description: "Match against name, email or phone",
-							}),
-						),
-						role: optionalEnum(USER_ROLES, {
-							description: "Filter to one role",
+				return rows.rows;
+			},
+			{
+				requireRole: ["admin", "super_admin"],
+				query: t.Object({
+					q: t.Optional(
+						t.String({
+							maxLength: 100,
+							description: "Match against name, email or phone",
 						}),
-						limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
+					),
+					role: optionalEnum(USER_ROLES, {
+						description: "Filter to one role",
 					}),
-					detail: {
-						tags: ["Admin"],
-						summary: "Find a person, and see their role and content count",
-						description:
-							"Backs role assignment, which needs a way to find someone " +
-							"before granting to them. Not paginated by cursor: this is a " +
-							"lookup, and the answer to a search that returns hundreds of " +
-							"people is a narrower search.",
-					},
+					limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
+				}),
+				detail: {
+					tags: ["Admin"],
+					summary: "Find a person, and see their role and content count",
+					description:
+						"Backs role assignment, which needs a way to find someone " +
+						"before granting to them. Not paginated by cursor: this is a " +
+						"lookup, and the answer to a search that returns hundreds of " +
+						"people is a narrower search.",
 				},
-			)
-	);
+			},
+		);
 }
 
 /** Cursor for the two time-ordered audit feeds. */
 function decodeTimeCursor(raw: string): { at: string; id: string } {
 	const parsed = decodeCursor(raw);
-	const at = parsed.t;
 	const id = parsed.i;
 
-	if (typeof at !== "string" || typeof id !== "string" || id.length === 0) {
+	if (typeof id !== "string" || id.length === 0) {
 		throw badRequest("Malformed cursor");
 	}
 
-	return { at, id };
+	// Bound into a ::timestamp cast, so it has to be a real date before it
+	// reaches the database — otherwise a tampered cursor is a 500.
+	return { at: cursorTimestamp(parsed.t), id };
 }

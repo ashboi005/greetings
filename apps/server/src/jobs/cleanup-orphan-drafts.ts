@@ -10,13 +10,9 @@
  */
 
 import { db } from "@greetings/db";
-import {
-	content,
-	contentAssets,
-	downloadIdempotency,
-} from "@greetings/db/schema";
+import { content, downloadIdempotency } from "@greetings/db/schema";
 import { and, eq, inArray, lt } from "drizzle-orm";
-import type { ObjectStorage } from "../lib/storage";
+import { type ObjectStorage, purgeContentObjects } from "../lib/storage";
 
 export interface CleanupResult {
 	draftsDeleted: number;
@@ -44,11 +40,6 @@ export async function cleanupOrphanDrafts(
 
 	const ids = stale.map((row) => row.id);
 
-	const assets = await db
-		.select({ storageKey: contentAssets.storageKey })
-		.from(contentAssets)
-		.where(inArray(contentAssets.contentId, ids));
-
 	// Objects first: deleting the rows first would lose the keys, leaking the
 	// objects forever. A failed delete here is retried on the next run, because
 	// the row is only removed once its objects are gone.
@@ -56,17 +47,20 @@ export async function cleanupOrphanDrafts(
 	let objectsFailed = 0;
 	const failedContent = new Set<string>();
 
-	for (const asset of assets) {
-		try {
-			await storage.delete(asset.storageKey);
-			objectsDeleted++;
-		} catch (cause) {
-			objectsFailed++;
-			console.warn(`Failed to delete object ${asset.storageKey}:`, cause);
-			// Key format is content/<contentId>/<uuid>.<ext>
-			const contentId = asset.storageKey.split("/")[1];
-			if (contentId) failedContent.add(contentId);
-		}
+	for (const contentId of ids) {
+		// Listed from the bucket rather than read from content_assets. Every
+		// upload starts with a presigned URL and only *some* end in a confirm
+		// call — a designer who uploads and then closes the tab leaves an object
+		// no row references. Working from the database would walk straight past
+		// those and pay for them forever. The key prefix is what ties an object
+		// to its draft, which is why it embeds the content id.
+		const result = await purgeContentObjects(storage, contentId);
+		objectsDeleted += result.deleted;
+		objectsFailed += result.failed;
+
+		// Keep the row when anything survived, so the keys are still findable
+		// on the next run. Deleting it would strand them.
+		if (result.failed > 0) failedContent.add(contentId);
 	}
 
 	const deletable = ids.filter((id) => !failedContent.has(id));

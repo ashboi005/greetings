@@ -1,6 +1,6 @@
 import { env } from "@greetings/env/server";
 import { Elysia, t } from "elysia";
-import { clientIp, consume } from "../../lib/rate-limit";
+import { clientIp, consume, consumeGlobal } from "../../lib/rate-limit";
 import {
 	currentUserResponse,
 	errorResponse,
@@ -17,6 +17,18 @@ import { authGuard } from "./session";
  * The verifier is injected so tests can supply a fake; production resolves the
  * real Firebase one lazily, on first use, so an unconfigured server still boots.
  */
+/**
+ * Sign-ins the whole process will verify per minute, from everyone combined.
+ *
+ * Sized never to bind in normal operation — a hundred a second is far past what
+ * this product will see — so that when it does bind, something is wrong and
+ * refusing quickly is the right answer.
+ */
+export const FIREBASE_VERIFY_GLOBAL_LIMIT = 6000;
+
+/** Sign-ins one address may make per minute. */
+export const FIREBASE_VERIFY_ADDRESS_LIMIT = 600;
+
 export function authRoutes(verifierOverride?: TokenVerifier) {
 	let verifier: TokenVerifier | undefined;
 	const getVerifier = () => {
@@ -31,18 +43,33 @@ export function authRoutes(verifierOverride?: TokenVerifier) {
 		.use(authGuard)
 		.post(
 			"/firebase",
-			async ({ body, request }) => {
-				// Keyed on IP because there is no user yet, and deliberately
-				// generous. Indian mobile carriers use carrier-grade NAT, so a
-				// single address can front thousands of genuine users — a tight
-				// per-IP limit locks out a whole network rather than an abuser.
-				// This is a backstop against resource exhaustion (each attempt
-				// costs a JWKS fetch and a signature check), not a credential
-				// guard: Google has already authenticated the token.
-				consume(`auth:firebase:${clientIp(request)}`, {
-					limit: 600,
+			async ({ body, request, server }) => {
+				// Two ceilings, because neither is sufficient alone.
+				//
+				// The global one first: verification costs a signature check, and
+				// an attacker rotating x-forwarded-for defeats any per-address
+				// limit. This caps the total, so evading the address limit buys
+				// nothing. Sized so it never binds in normal traffic — 6000/minute
+				// is a hundred sign-ins a second, far past what this product will
+				// see, and past it callers are refused in microseconds rather than
+				// the server queueing crypto until it falls over.
+				consumeGlobal("firebase-verify", {
+					limit: FIREBASE_VERIFY_GLOBAL_LIMIT,
 					windowSeconds: 60,
 				});
+
+				// Then per address, to stop one bad client crowding out everyone
+				// else before the global ceiling is anywhere near. Deliberately
+				// generous: Indian mobile carriers use carrier-grade NAT, so one
+				// address fronts thousands of genuine users, and a tight limit
+				// locks out a network rather than an abuser. Not a credential
+				// guard either way — Google has already authenticated the token.
+				consume(
+					`auth:firebase:${clientIp(request, {
+						socketAddress: server?.requestIP(request)?.address,
+					})}`,
+					{ limit: FIREBASE_VERIFY_ADDRESS_LIMIT, windowSeconds: 60 },
+				);
 
 				const identity = await getVerifier().verify(body.idToken);
 				return signInWithVerifiedIdentity(identity);

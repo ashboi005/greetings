@@ -62,7 +62,9 @@ async function draft(title: string) {
 
 async function publish(title = "Audited") {
 	const id = await draft(title);
-	await api.post(`/v1/designer/content/${id}/submit`, { token: designer.token });
+	await api.post(`/v1/designer/content/${id}/submit`, {
+		token: designer.token,
+	});
 	await api.post(`/v1/admin/content/${id}/approve`, { token: admin.token });
 	return id;
 }
@@ -281,10 +283,9 @@ describe("finding the item to audit", () => {
 		);
 		expect(mine.body.length).toBe(2);
 
-		const someoneElse = await api.get(
-			"/v1/admin/content?designerId=nobody",
-			{ token: admin.token },
-		);
+		const someoneElse = await api.get("/v1/admin/content?designerId=nobody", {
+			token: admin.token,
+		});
 		expect(someoneElse.body).toHaveLength(0);
 	});
 });
@@ -432,7 +433,9 @@ describe("moderation activity", () => {
 		});
 
 		expect(res.status).toBe(200);
-		const contentIds = res.body.items.map((e: { contentId: string }) => e.contentId);
+		const contentIds = res.body.items.map(
+			(e: { contentId: string }) => e.contentId,
+		);
 		expect(contentIds).toContain(a);
 		expect(contentIds).toContain(b);
 		expect(res.body.items[0].action).toBe("remove");

@@ -59,7 +59,10 @@ export function createApp(options: AppOptions = {}) {
 			.use(
 				cors({
 					origin: env.CORS_ORIGIN,
-					methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+					// PUT belongs here: /v1/me/profile and the tag replacement route
+					// both use it, and a browser preflight for a method missing from
+					// this list is refused before the request is ever made.
+					methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 					allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
 					credentials: true,
 				}),

@@ -34,6 +34,53 @@ export const env = createEnv({
 		R2_ACCESS_KEY_ID: z.string().min(1).optional(),
 		R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
 		R2_BUCKET: z.string().min(1).optional(),
+		// --- Operational limits (spec §12) ---
+
+		/**
+		 * Whether `x-forwarded-for` and `cf-connecting-ip` may be believed.
+		 *
+		 * A client talking straight to this server sets those headers itself, so
+		 * trusting them unconditionally turns per-address rate limiting into
+		 * decoration: send a different address each request and no limit ever
+		 * trips. Only a deployment that is genuinely behind a proxy which
+		 * *overwrites* the header may turn this on. Defaults off, because the
+		 * unsafe direction should require a deliberate act.
+		 */
+		TRUST_PROXY_HEADERS: z
+			.enum(["true", "false"])
+			.default("false")
+			.transform((value) => value === "true"),
+
+		/**
+		 * Postgres connections this instance may hold.
+		 *
+		 * Default sized for a four-core machine: past about twice the core count
+		 * more connections buy no throughput and cost latency. Raise it for a
+		 * bigger database server, not because requests are queueing — queueing at
+		 * the pool is the design.
+		 */
+		DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
+
+		/**
+		 * Longest a single statement may run before Postgres cancels it.
+		 *
+		 * A query with no ceiling holds its connection indefinitely; enough of
+		 * them and the pool is exhausted and every request queues behind work
+		 * nobody is waiting for any more.
+		 */
+		DATABASE_STATEMENT_TIMEOUT_MS: z.coerce
+			.number()
+			.int()
+			.min(100)
+			.default(15_000),
+
+		/** Largest request body accepted, in bytes. */
+		MAX_REQUEST_BODY_BYTES: z.coerce
+			.number()
+			.int()
+			.min(1024)
+			.default(1024 * 1024),
+
 		NODE_ENV: z
 			.enum(["development", "production", "test"])
 			.default("development"),

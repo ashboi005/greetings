@@ -25,3 +25,8 @@ if (!/_test(\?|$)/.test(testUrl)) {
 
 process.env.DATABASE_URL = testUrl;
 process.env.NODE_ENV = "test";
+
+// `app.handle()` has no socket, so there is no address to read; the suite
+// distinguishes callers with x-forwarded-for instead. Production defaults this
+// off, which is why it has to be set explicitly here rather than relied upon.
+process.env.TRUST_PROXY_HEADERS = "true";

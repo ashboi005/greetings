@@ -34,3 +34,22 @@ export function decodeCursor(cursor: string): Record<string, unknown> {
 
 	return parsed as Record<string, unknown>;
 }
+
+/**
+ * Reads a timestamp out of a cursor.
+ *
+ * Cursors are client-supplied, and several are bound straight into a
+ * `::timestamp` cast. Postgres answers a string it cannot parse with an error,
+ * which leaves the server as a 500 — so a tampered cursor would page whoever is
+ * on call for what is really a malformed request. Parsing here turns it into
+ * the 400 it always was.
+ */
+export function cursorTimestamp(value: unknown): string {
+	if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+		throw badRequest("Malformed cursor");
+	}
+
+	// Normalised, so what reaches the database is always the same shape
+	// regardless of what the client sent back.
+	return new Date(value).toISOString();
+}

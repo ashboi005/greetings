@@ -3,7 +3,11 @@ import { userLanguages, userProfiles } from "@greetings/db/schema";
 import { eq } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest } from "../../lib/errors";
-import { decodeCursor, encodeCursor } from "../../lib/pagination";
+import {
+	cursorTimestamp,
+	decodeCursor,
+	encodeCursor,
+} from "../../lib/pagination";
 import {
 	errorResponse,
 	feedResponse,
@@ -190,18 +194,19 @@ function toFeedItem(row: {
 function decodeSearchCursor(raw: string) {
 	const parsed = decodeCursor(raw);
 	const rank = parsed.r;
-	const publishedAt = parsed.p;
 	const id = parsed.i;
 
 	if (
 		typeof rank !== "number" ||
 		!Number.isFinite(rank) ||
-		typeof publishedAt !== "string" ||
 		typeof id !== "string" ||
 		id.length === 0
 	) {
 		throw badRequest("Malformed cursor");
 	}
 
-	return { rank, publishedAt, id };
+	// Validated rather than passed straight through: it is bound into a
+	// ::timestamp cast, and a string Postgres cannot parse would surface as a
+	// 500 rather than the 400 a tampered cursor deserves.
+	return { rank, publishedAt: cursorTimestamp(parsed.p), id };
 }

@@ -29,6 +29,16 @@ export interface ObjectStorage {
 	/** Metadata for an uploaded object, or null when it does not exist. */
 	stat(key: string): Promise<StoredObject | null>;
 
+	/**
+	 * Every key under a prefix.
+	 *
+	 * The bucket, not the database, is the authority on what was uploaded. A
+	 * designer who presigns a URL, PUTs the file and then closes the tab leaves
+	 * an object no row ever references — so a cleanup driven by `content_assets`
+	 * cannot see it, and it would sit in the bucket being paid for forever.
+	 */
+	list(prefix: string): Promise<string[]>;
+
 	delete(key: string): Promise<void>;
 }
 
@@ -83,10 +93,78 @@ export function createR2Storage(config: R2Config): ObjectStorage {
 			}
 		},
 
+		async list(prefix) {
+			const keys: string[] = [];
+			let continuationToken: string | undefined;
+
+			// Paged: S3 caps a listing at 1000 keys and reports the truncation
+			// rather than failing, so a caller that ignores the token silently
+			// cleans up a fraction of what it was asked to.
+			do {
+				const page = await client.list({
+					prefix,
+					continuationToken,
+					maxKeys: 1000,
+				});
+
+				for (const object of page.contents ?? []) {
+					if (object.key) keys.push(object.key);
+				}
+
+				continuationToken = page.isTruncated
+					? page.nextContinuationToken
+					: undefined;
+			} while (continuationToken);
+
+			return keys;
+		},
+
 		async delete(key) {
 			await client.file(key).delete();
 		},
 	};
+}
+
+/** The prefix every object for one piece of content lives under. */
+export function contentPrefix(contentId: string): string {
+	return `content/${contentId}/`;
+}
+
+/**
+ * Deletes every object belonging to a piece of content.
+ *
+ * Driven by the bucket listing rather than by `content_assets`, so it also
+ * catches uploads that were presigned and PUT but never confirmed. Returns what
+ * it managed to do rather than throwing: a storage failure should not roll back
+ * a database change the caller has already decided on, and the nightly sweep
+ * retries whatever is left.
+ */
+export async function purgeContentObjects(
+	storage: ObjectStorage,
+	contentId: string,
+): Promise<{ deleted: number; failed: number }> {
+	let deleted = 0;
+	let failed = 0;
+
+	let keys: string[];
+	try {
+		keys = await storage.list(contentPrefix(contentId));
+	} catch (cause) {
+		console.warn(`Failed to list objects for ${contentId}:`, cause);
+		return { deleted: 0, failed: 1 };
+	}
+
+	for (const key of keys) {
+		try {
+			await storage.delete(key);
+			deleted++;
+		} catch (cause) {
+			console.warn(`Failed to delete object ${key}:`, cause);
+			failed++;
+		}
+	}
+
+	return { deleted, failed };
 }
 
 /**

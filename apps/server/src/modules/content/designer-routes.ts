@@ -12,7 +12,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest, conflict, notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
-import type { ObjectStorage } from "../../lib/storage";
+import { type ObjectStorage, purgeContentObjects } from "../../lib/storage";
 import { authGuard, requireUser } from "../auth/session";
 import { transition } from "./lifecycle";
 
@@ -27,6 +27,23 @@ import { transition } from "./lifecycle";
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"] as const;
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const UPLOAD_URL_TTL_SECONDS = 15 * 60;
+
+/**
+ * The states in which content is still the designer's to change.
+ *
+ * Both mean an admin has not (or no longer has) a decision standing on it, so
+ * editing changes nothing anyone has relied on. Every mutating designer route
+ * checks against this one list rather than repeating the pair.
+ */
+const EDITABLE_STATUSES = ["draft", "rejected"] as const;
+
+function assertEditable(status: string, message?: string): void {
+	if (!(EDITABLE_STATUSES as readonly string[]).includes(status)) {
+		throw conflict(message ?? `Cannot change content that is ${status}.`, {
+			status,
+		});
+	}
+}
 
 export function designerContentRoutes(storage: () => ObjectStorage) {
 	return new Elysia({ prefix: "/v1/designer" })
@@ -72,17 +89,140 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 			},
 		)
 
+		.patch(
+			"/content/:id",
+			async ({ currentUser, params, body }) => {
+				const designer = requireUser(currentUser);
+				const existing = await loadOwnContent(params.id, designer.id);
+
+				// Editable only before an admin has ruled on it. An approval is of
+				// specific words and a specific image; letting the text change
+				// afterwards would make review theatre — a designer could get an
+				// innocuous title approved and then swap in anything.
+				assertEditable(existing.status);
+
+				if (body.primaryLanguage) {
+					await assertLanguageExists(body.primaryLanguage);
+				}
+				// Explicit null clears the region, making the item global. That is
+				// different from omitting the field, which leaves it alone.
+				if (body.regionCode) await assertRegionExists(body.regionCode);
+
+				const [updated] = await db
+					.update(content)
+					.set({
+						...(body.title === undefined ? {} : { title: body.title }),
+						...(body.description === undefined
+							? {}
+							: { description: body.description }),
+						...(body.primaryLanguage === undefined
+							? {}
+							: { primaryLanguage: body.primaryLanguage }),
+						...(body.regionCode === undefined
+							? {}
+							: { regionCode: body.regionCode }),
+						updatedAt: new Date(),
+					})
+					.where(
+						and(
+							eq(content.id, params.id),
+							eq(content.designerId, designer.id),
+							// Re-checked in the UPDATE itself: the status read above
+							// could have changed under a concurrent submit.
+							inArray(content.status, EDITABLE_STATUSES),
+						),
+					)
+					.returning({ id: content.id, status: content.status });
+
+				if (!updated) {
+					throw conflict("This content is no longer editable.");
+				}
+
+				return updated;
+			},
+			{
+				requireRole: ["designer"],
+				body: t.Object({
+					title: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
+					description: t.Optional(
+						t.Union([t.String({ maxLength: 2000 }), t.Null()]),
+					),
+					primaryLanguage: t.Optional(t.String({ minLength: 2 })),
+					regionCode: t.Optional(
+						t.Union([
+							t.String({ minLength: 2 }),
+							t.Null({ description: "Clears the region, making it global" }),
+						]),
+					),
+				}),
+				detail: {
+					tags: ["Designer"],
+					summary: "Edit a draft or a rejected item",
+					description:
+						"Only while the item is a draft or has been rejected. Omitted " +
+						"fields are left alone; an explicit null clears description or " +
+						"region. This is how a designer acts on a rejection reason.",
+				},
+			},
+		)
+
+		.delete(
+			"/content/:id",
+			async ({ currentUser, params }) => {
+				const designer = requireUser(currentUser);
+				const existing = await loadOwnContent(params.id, designer.id);
+
+				// Anything an admin has seen leaves the designer's hands. Removing
+				// live content is a moderation decision and has to leave an audit
+				// row; a designer deleting their own row would erase it instead.
+				assertEditable(
+					existing.status,
+					"Only a draft or a rejected item can be discarded. Ask an admin to take down published content.",
+				);
+
+				const [deleted] = await db
+					.delete(content)
+					.where(
+						and(
+							eq(content.id, params.id),
+							eq(content.designerId, designer.id),
+							inArray(content.status, EDITABLE_STATUSES),
+						),
+					)
+					.returning({ id: content.id });
+
+				if (!deleted) throw conflict("This content can no longer be deleted.");
+
+				// After the row is gone, not before: a failure here leaves objects
+				// for the nightly sweep, whereas failing first would leave a row the
+				// designer has already been told is deleted.
+				const purged = await purgeContentObjects(storage(), params.id);
+
+				return { ok: true as const, objectsDeleted: purged.deleted };
+			},
+			{
+				requireRole: ["designer"],
+				detail: {
+					tags: ["Designer"],
+					summary: "Discard a draft or a rejected item",
+					description:
+						"Deletes the row and its uploaded images. Published content " +
+						"cannot be deleted this way — that is an admin removal, which " +
+						"is recorded.",
+				},
+			},
+		)
+
 		.post(
 			"/content/:id/upload-url",
 			async ({ currentUser, params, body }) => {
 				const designer = requireUser(currentUser);
 				const draft = await loadOwnContent(params.id, designer.id);
 
-				if (draft.status !== "draft" && draft.status !== "rejected") {
-					throw conflict(
-						`Cannot add images to content that is ${draft.status}.`,
-					);
-				}
+				assertEditable(
+					draft.status,
+					`Cannot add images to content that is ${draft.status}.`,
+				);
 
 				if (!ALLOWED_MIME.includes(body.mimeType as never)) {
 					throw badRequest(
@@ -136,11 +276,10 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 				const designer = requireUser(currentUser);
 				const draft = await loadOwnContent(params.id, designer.id);
 
-				if (draft.status !== "draft" && draft.status !== "rejected") {
-					throw conflict(
-						`Cannot add images to content that is ${draft.status}.`,
-					);
-				}
+				assertEditable(
+					draft.status,
+					`Cannot add images to content that is ${draft.status}.`,
+				);
 
 				// The key must belong to this content: without this check a
 				// designer could confirm someone else's object into their own post.
@@ -202,9 +341,10 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 				const designer = requireUser(currentUser);
 				const draft = await loadOwnContent(params.id, designer.id);
 
-				if (draft.status !== "draft" && draft.status !== "rejected") {
-					throw conflict(`Cannot retag content that is ${draft.status}.`);
-				}
+				assertEditable(
+					draft.status,
+					`Cannot retag content that is ${draft.status}.`,
+				);
 
 				const unique = [...new Set(body.tagIds)];
 				const found = await db

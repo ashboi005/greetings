@@ -184,6 +184,7 @@ export function client(app: { handle(req: Request): Promise<Response> }) {
 		get: (path: string, opts?: Options) => call("GET", path, opts),
 		post: (path: string, opts?: Options) => call("POST", path, opts),
 		put: (path: string, opts?: Options) => call("PUT", path, opts),
+		patch: (path: string, opts?: Options) => call("PATCH", path, opts),
 		delete: (path: string, opts?: Options) => call("DELETE", path, opts),
 	};
 }
