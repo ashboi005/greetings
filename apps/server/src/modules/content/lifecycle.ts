@@ -10,6 +10,7 @@
  * guarantees an audit row for each move.
  */
 
+import { scoreOne } from "@greetings/db/feed-score";
 import type { ContentStatus, ModerationAction } from "@greetings/db/schema";
 import { content, moderationActions } from "@greetings/db/schema";
 import { and, eq } from "drizzle-orm";
@@ -137,6 +138,13 @@ export async function transition(
 	}
 
 	await tx.update(content).set(patch).where(eq(content.id, input.contentId));
+
+	// Anything that makes an item visible needs a ranking score before the
+	// transaction commits, or it goes live scored zero and sits at the bottom of
+	// every feed until the nightly refresh notices it.
+	if (rule.to === "published") {
+		await scoreOne(tx, input.contentId);
+	}
 
 	await tx.insert(moderationActions).values({
 		id: crypto.randomUUID(),

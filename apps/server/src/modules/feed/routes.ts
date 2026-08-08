@@ -15,7 +15,7 @@ import {
 } from "../../lib/responses";
 import { authGuard, requireUser } from "../auth/session";
 import { queryFeed, querySearch } from "./queries";
-import { currentBucket, decodeFeedCursor, encodeFeedCursor } from "./ranking";
+import { decodeFeedCursor, encodeFeedCursor } from "./ranking";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -38,9 +38,6 @@ export function feedRoutes() {
 				const limit = query.limit ?? DEFAULT_LIMIT;
 
 				const cursor = query.cursor ? decodeFeedCursor(query.cursor) : null;
-				// A cursor carries the clock its first page was scored against,
-				// so later pages rank identically even as time passes.
-				const bucket = cursor?.bucket ?? currentBucket();
 
 				const { regionCode, languageCodes } = await loadPreferences(user.id);
 
@@ -49,7 +46,6 @@ export function feedRoutes() {
 				const rows = await queryFeed({
 					regionCode,
 					languageCodes,
-					bucket,
 					limit: limit + 1,
 					after: cursor ? { score: cursor.score, id: cursor.id } : undefined,
 				});
@@ -61,7 +57,7 @@ export function feedRoutes() {
 					items: page.map(toFeedItem),
 					nextCursor:
 						rows.length > limit && last
-							? encodeFeedCursor({ bucket, score: last.score, id: last.id })
+							? encodeFeedCursor({ score: last.score, id: last.id })
 							: null,
 				};
 			},

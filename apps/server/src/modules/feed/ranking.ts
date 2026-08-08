@@ -18,51 +18,42 @@ import { decodeCursor, encodeCursor } from "../../lib/pagination";
 export const WEIGHT_LANGUAGE = 2.0;
 export const WEIGHT_REGION = 1.5;
 export const WEIGHT_GLOBAL = 1.0;
-export const WEIGHT_POPULARITY = 0.5;
-export const RECENCY_HALF_LIFE_DAYS = 7;
-export const POPULARITY_WINDOW_DAYS = 7;
 
-/** Seconds per bucket. See `currentBucket`. */
-const BUCKET_SECONDS = 3600;
+// The recency and popularity weights live with the column they are written
+// into, because the API, the nightly job and the demo seed all write it and
+// three copies of a formula agree only until someone edits one.
+export {
+	POPULARITY_WINDOW_DAYS,
+	RECENCY_HALF_LIFE_DAYS,
+	WEIGHT_POPULARITY,
+} from "@greetings/db/feed-score";
 
 /**
- * Quantises "now" to the top of the hour.
+ * The cursor is just a position in the ranking.
  *
- * Score depends on the current time through recency decay, so a cursor issued
- * one second ago would rank against a slightly different clock and pages would
- * drift — items sliding across the boundary get skipped or repeated. Freezing
- * the reference time to the hour makes the ordering deterministic for the life
- * of a paging session, and the cursor carries the bucket so later pages score
- * against exactly the same clock as the first.
+ * It used to carry an hour-quantised clock as well. That existed because the
+ * score was computed from `now()` on every request, so two pages of one paging
+ * session ranked against slightly different clocks and items could slide across
+ * the boundary — skipped or repeated. The score is now stored on the row and
+ * refreshed nightly, so within a paging session the ordering simply does not
+ * move, and there is no clock to pin.
  */
-export function currentBucket(now: Date = new Date()): number {
-	return Math.floor(now.getTime() / 1000 / BUCKET_SECONDS);
-}
-
-export function bucketToDate(bucket: number): Date {
-	return new Date(bucket * BUCKET_SECONDS * 1000);
-}
-
 export interface FeedCursor {
-	bucket: number;
 	score: number;
 	id: string;
 }
 
 export function encodeFeedCursor(cursor: FeedCursor): string {
-	return encodeCursor({ b: cursor.bucket, s: cursor.score, i: cursor.id });
+	return encodeCursor({ s: cursor.score, i: cursor.id });
 }
 
 export function decodeFeedCursor(raw: string): FeedCursor {
 	const parsed = decodeCursor(raw);
 
-	const bucket = parsed.b;
 	const score = parsed.s;
 	const id = parsed.i;
 
 	if (
-		typeof bucket !== "number" ||
-		!Number.isFinite(bucket) ||
 		typeof score !== "number" ||
 		!Number.isFinite(score) ||
 		typeof id !== "string" ||
@@ -71,5 +62,5 @@ export function decodeFeedCursor(raw: string): FeedCursor {
 		throw badRequest("Malformed cursor");
 	}
 
-	return { bucket, score, id };
+	return { score, id };
 }

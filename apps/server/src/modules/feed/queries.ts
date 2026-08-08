@@ -8,15 +8,7 @@
 
 import { db } from "@greetings/db";
 import { sql } from "drizzle-orm";
-import {
-	bucketToDate,
-	POPULARITY_WINDOW_DAYS,
-	RECENCY_HALF_LIFE_DAYS,
-	WEIGHT_GLOBAL,
-	WEIGHT_LANGUAGE,
-	WEIGHT_POPULARITY,
-	WEIGHT_REGION,
-} from "./ranking";
+import { WEIGHT_GLOBAL, WEIGHT_LANGUAGE, WEIGHT_REGION } from "./ranking";
 
 /**
  * Inlines a numeric constant into the SQL text.
@@ -44,80 +36,171 @@ export interface FeedRow {
 export interface FeedQueryInput {
 	regionCode: string | null;
 	languageCodes: string[];
-	bucket: number;
 	limit: number;
 	after?: { score: number; id: string };
 }
 
 /**
+ * The six groups a viewer divides the catalogue into.
+ *
+ * Every item falls in exactly one, and within a group the viewer-dependent part
+ * of the score is a single constant. That is the whole trick: it means the
+ * order *within* a group is the stored `base_score` order, which an index
+ * already holds, so each group is a seek-and-read of at most one page's worth
+ * of rows rather than a scan of everything published.
+ *
+ * The bonuses are the same weights as before (language 2.0, own region 1.5,
+ * global 1.0), just enumerated rather than computed per row.
+ */
+type RegionClass = "own" | "global" | "other";
+
+interface Partition {
+	bonus: number;
+	language: boolean;
+	region: RegionClass;
+}
+
+const PARTITIONS: Partition[] = [
+	{ bonus: WEIGHT_LANGUAGE + WEIGHT_REGION, language: true, region: "own" },
+	{ bonus: WEIGHT_LANGUAGE + WEIGHT_GLOBAL, language: true, region: "global" },
+	{ bonus: WEIGHT_LANGUAGE, language: true, region: "other" },
+	{ bonus: WEIGHT_REGION, language: false, region: "own" },
+	{ bonus: WEIGHT_GLOBAL, language: false, region: "global" },
+	{ bonus: 0, language: false, region: "other" },
+];
+
+/**
  * One page of the ranked feed.
  *
- * `referenceTime` comes from the caller's bucket, not `now()`, so every page of
- * a paging session scores against the same clock.
+ * The viewer-independent half of every score is already stored on the row, so
+ * this reads it rather than computing it — see modules/feed/scores.ts for what
+ * that buys and what it costs.
  */
 export async function queryFeed(input: FeedQueryInput): Promise<FeedRow[]> {
-	const reference = bucketToDate(input.bucket);
-
 	// An empty array would make `= ANY` fail to type-infer, and a user who has
 	// not onboarded has no languages.
 	const languages = input.languageCodes.length > 0 ? input.languageCodes : [""];
+	const languageMatch = sql`c.primary_language = ANY(${sql.param(languages)}::text[])`;
 
-	// `db.execute` types rows as Record<string, unknown>; the column list below
-	// is the contract, so it is asserted once here rather than field by field.
-	const result = await db.execute(sql`
-		WITH scored AS (
+	// A viewer with no region has no "own region" group; the predicate below
+	// would compare against NULL and match nothing, which is the correct
+	// outcome — those items land in "other" instead.
+	const ownRegion = input.regionCode
+		? sql`c.region_code = ${input.regionCode}::text`
+		: sql`FALSE`;
+	const otherRegion = input.regionCode
+		? sql`c.region_code IS NOT NULL AND c.region_code <> ${input.regionCode}::text`
+		: sql`c.region_code IS NOT NULL`;
+
+	// A language-matching group is emitted once per language rather than once
+	// with `= ANY`. It reads worse and it is the difference between an index
+	// seek and a scan: with an array the planner cannot combine the match with
+	// the ordering, so it reads every row in the group and sorts — measured at
+	// 200k items, 18ms a branch instead of 0.1ms. Equality on a single value
+	// lets it walk the index already in score order and stop at the page.
+	//
+	// Profiles cap at ten languages, so this is at most thirty-three branches,
+	// each reading a page.
+	type Branch = Partition & { languageCode: string | null };
+
+	const expanded: Branch[] = [];
+	for (const partition of PARTITIONS) {
+		if (partition.language) {
+			for (const code of languages) {
+				expanded.push({ ...partition, languageCode: code });
+			}
+		} else {
+			expanded.push({ ...partition, languageCode: null });
+		}
+	}
+
+	const branches = expanded.map(({ bonus, language, region, languageCode }) => {
+		const languagePredicate = language
+			? sql`c.primary_language = ${languageCode}::text`
+			: // The negated case has no value to seek on, so it reads the
+				// score-ordered index and filters. That terminates quickly because
+				// most content is *not* in any one viewer's languages.
+				sql`NOT (${languageMatch})`;
+		const regionPredicate =
+			region === "own"
+				? ownRegion
+				: region === "global"
+					? sql`c.region_code IS NULL`
+					: otherRegion;
+
+		// The keyset, translated into this group's terms. Globally the order is
+		// by (base + bonus, id); within the group `bonus` is constant, so "after
+		// the cursor" is `base <= cursorScore - bonus`. This exists to let the
+		// index seek rather than filter as it reads, so it is deliberately
+		// inclusive: subtracting a bonus and adding it back is not exact in
+		// floating point, and a strict comparison here could drop the very row
+		// the next page should start with. The outer query applies the exact
+		// test against the score as it was issued.
+		const after = input.after
+			? sql`AND (c.base_score, c.id) <= (
+					${input.after.score - bonus}::double precision,
+					${input.after.id}::text
+				)`
+			: sql``;
+
+		return sql`(
 			SELECT
 				c.id,
 				c.title,
 				c.description,
-				c.primary_language        AS "primaryLanguage",
-				c.region_code             AS "regionCode",
-				c.download_count          AS "downloadCount",
-				c.published_at            AS "publishedAt",
-				c.designer_id             AS "designerId",
-				u.name                    AS "designerName",
-				a.storage_key             AS "storageKey",
-				(
-					-- sql.param: Drizzle's template flattens a bare array into
-					-- separate chunks, which reaches Postgres as a scalar.
-					${num(WEIGHT_LANGUAGE)} * (CASE WHEN c.primary_language = ANY(${sql.param(languages)}::text[]) THEN 1 ELSE 0 END)
-					+ ${num(WEIGHT_REGION)} * (CASE WHEN ${input.regionCode}::text IS NOT NULL
-					                            AND c.region_code = ${input.regionCode}::text THEN 1 ELSE 0 END)
-					+ ${num(WEIGHT_GLOBAL)} * (CASE WHEN c.region_code IS NULL THEN 1 ELSE 0 END)
-					+ POWER(
-						0.5,
-						GREATEST(EXTRACT(EPOCH FROM (${reference}::timestamp - c.published_at)), 0)
-							/ (${num(RECENCY_HALF_LIFE_DAYS)} * 86400)
-					)
-					+ ${num(WEIGHT_POPULARITY)} * LN(1 + COALESCE(d.recent, 0))
-				) AS score
+				c.primary_language   AS "primaryLanguage",
+				c.region_code        AS "regionCode",
+				c.download_count     AS "downloadCount",
+				c.published_at       AS "publishedAt",
+				c.designer_id        AS "designerId",
+				c.primary_asset_key  AS "storageKey",
+				c.base_score         AS "baseScore",
+				${num(bonus)}::double precision AS bonus
 			FROM content c
-			JOIN "user" u ON u.id = c.designer_id
-			-- One representative image per item; the feed shows a single tile.
-			LEFT JOIN LATERAL (
-				SELECT storage_key FROM content_assets
-				WHERE content_id = c.id
-				ORDER BY created_at ASC
-				LIMIT 1
-			) a ON TRUE
-			LEFT JOIN LATERAL (
-				SELECT COUNT(*)::int AS recent
-				FROM download_events de
-				WHERE de.content_id = c.id
-					AND de.created_at > ${reference}::timestamp - (${num(POPULARITY_WINDOW_DAYS)} || ' days')::interval
-			) d ON TRUE
 			WHERE c.status = 'published'
 				AND c.visibility_hold = FALSE
-				AND c.published_at IS NOT NULL
+				AND ${languagePredicate}
+				AND ${regionPredicate}
+				${after}
+			-- NULLS LAST is not decoration. Postgres reads plain DESC as DESC
+			-- NULLS FIRST, which does not match how the index is built, so it
+			-- read every row in the group and sorted them — 18ms a branch rather
+			-- than 0.2ms. Both columns are NOT NULL, so this changes nothing
+			-- about the result, only about whether the index can be used.
+			ORDER BY c.base_score DESC NULLS LAST, c.id DESC NULLS LAST
+			-- One more than the page, so that after the outer query discards
+			-- rows sitting exactly on the cursor this group can still fill its
+			-- share of the page.
+			LIMIT ${input.limit + 1}
+		)`;
+	});
+
+	// Each branch returns at most a page, so the merge sorts six pages rather
+	// than the catalogue. Any item in the true top N is in its own group's top
+	// N, so taking a page from each and re-ranking gives exactly the same answer
+	// as scoring everything would — this is an optimisation, not an
+	// approximation.
+	const result = await db.execute(sql`
+		WITH pool AS (
+			${sql.join(branches, sql` UNION ALL `)}
 		)
-		SELECT * FROM scored
+		SELECT
+			pool.*,
+			u.name AS "designerName",
+			pool."baseScore" + pool.bonus AS score
+		FROM pool
+		JOIN "user" u ON u.id = pool."designerId"
 		${
 			input.after
-				? sql`WHERE (score, id) < (${input.after.score}::double precision, ${input.after.id}::text)`
+				? // The exact keyset, against the score as it was issued rather
+					// than one reconstructed from a subtraction. Strict here, so no
+					// row can repeat across pages.
+					sql`WHERE (pool."baseScore" + pool.bonus, pool.id) < (
+							${input.after.score}::double precision,
+							${input.after.id}::text
+						)`
 				: sql``
 		}
-		-- id breaks score ties, so the ordering is total and the keyset above is
-		-- exact: no row can be skipped or repeated between pages.
 		ORDER BY score DESC, id DESC
 		LIMIT ${input.limit}
 	`);
@@ -167,7 +250,7 @@ export async function querySearch(
 				c.published_at            AS "publishedAt",
 				c.designer_id             AS "designerId",
 				u.name                    AS "designerName",
-				a.storage_key             AS "storageKey",
+				c.primary_asset_key       AS "storageKey",
 				CASE
 					WHEN ${hasTerm} THEN
 						GREATEST(
@@ -180,12 +263,6 @@ export async function querySearch(
 				END AS rank
 			FROM content c
 			JOIN "user" u ON u.id = c.designer_id
-			LEFT JOIN LATERAL (
-				SELECT storage_key FROM content_assets
-				WHERE content_id = c.id
-				ORDER BY created_at ASC
-				LIMIT 1
-			) a ON TRUE
 			WHERE c.status = 'published'
 				AND c.visibility_hold = FALSE
 				AND c.published_at IS NOT NULL

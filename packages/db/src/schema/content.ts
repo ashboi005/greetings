@@ -2,6 +2,7 @@ import { relations, sql } from "drizzle-orm";
 import {
 	boolean,
 	customType,
+	doublePrecision,
 	index,
 	integer,
 	pgEnum,
@@ -52,6 +53,9 @@ const tsvector = customType<{ data: string }>({
 	},
 });
 
+/** What the feed considers visible. Every feed index is partial on this. */
+const sqlPublished = sql`status = 'published' AND visibility_hold = false`;
+
 export const content = pgTable(
 	"content",
 	{
@@ -72,6 +76,33 @@ export const content = pgTable(
 		// Denormalised running total. The authoritative history is
 		// download_events; this exists so listings do not aggregate on every read.
 		downloadCount: integer("download_count").default(0).notNull(),
+
+		// --- Materialised feed ranking (spec §7) ---
+		//
+		// The feed used to compute these per row, per request: a lateral count
+		// over download_events for every published item, then a sort over all of
+		// them. Measured at 200k items that was 4.7 seconds a page. Precomputing
+		// the parts of the score that do not depend on who is asking turns the
+		// query into six bounded index scans.
+
+		/** Downloads in the popularity window, refreshed nightly. */
+		recentDownloads: integer("recent_downloads").default(0).notNull(),
+
+		/**
+		 * Recency decay plus popularity — everything in the score that is the
+		 * same for every viewer. The viewer's language and region are added at
+		 * query time as one of six constants, which is what lets each partition
+		 * be read straight off an index in score order.
+		 */
+		baseScore: doublePrecision("base_score").default(0).notNull(),
+
+		/**
+		 * The image the feed shows, denormalised from `content_assets`.
+		 *
+		 * A feed tile needs one image, and fetching it per row was the second of
+		 * the two lateral joins. Written when the first asset is confirmed.
+		 */
+		primaryAssetKey: text("primary_asset_key"),
 
 		// Set automatically once reports pass the threshold, dropping the item
 		// out of the feed until an admin rules on it.
@@ -100,12 +131,34 @@ export const content = pgTable(
 		),
 	},
 	(table) => [
-		// The feed's hot path: published, unheld, newest first.
-		index("content_feed_idx").on(
-			table.status,
-			table.visibilityHold,
-			table.publishedAt,
-		),
+		// --- The feed's three access paths (spec §7) ---
+		//
+		// All partial on published-and-unheld, which is both what the feed asks
+		// for and a small fraction of the table, so the indexes stay narrow and
+		// a draft or a removed item costs nothing to carry.
+
+		// Each is (something to seek on, then score) so a group can be read in
+		// ranking order and stopped at a page, rather than read whole and sorted.
+		// The `.desc()` matters: it emits DESC NULLS LAST, and a query ordering by
+		// plain DESC — which Postgres reads as NULLS FIRST — cannot use them.
+
+		// Score alone, for the groups defined by *not* matching the viewer's
+		// language, which have no value to seek on.
+		index("content_feed_score_idx")
+			.on(table.baseScore.desc(), table.id.desc())
+			.where(sqlPublished),
+		// Language then score, for the groups that do match.
+		index("content_feed_lang_idx")
+			.on(table.primaryLanguage, table.baseScore.desc(), table.id.desc())
+			.where(sqlPublished),
+		// Region then score, for the viewer's own region.
+		index("content_feed_region_idx")
+			.on(table.regionCode, table.baseScore.desc(), table.id.desc())
+			.where(sqlPublished),
+		// Recency, for search with no term and for the nightly refresh.
+		index("content_published_at_idx")
+			.on(table.publishedAt.desc())
+			.where(sqlPublished),
 		index("content_designer_idx").on(table.designerId, table.createdAt),
 		// The admin review queue, oldest first so nothing is starved.
 		index("content_review_queue_idx").on(table.status, table.submittedAt),

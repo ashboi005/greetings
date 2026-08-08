@@ -5,11 +5,13 @@
  *   bun run jobs rollup               # recompute yesterday
  *   bun run jobs rollup 2026-08-01    # recompute one date
  *   bun run jobs rollup 2026-08-01 2026-08-07
+ *   bun run jobs scores               # recompute feed ranking scores
  *   bun run jobs cleanup              # orphan drafts and expired keys
  *
  * Every job is idempotent, so a retry after a failure is always safe.
  */
 
+import { refreshFeedScores } from "@greetings/db/feed-score";
 import { env } from "@greetings/env/server";
 import { requireObjectStorage } from "../lib/storage";
 import {
@@ -32,6 +34,11 @@ function optionalStorage() {
 	} catch {
 		return null;
 	}
+}
+
+async function runScores() {
+	const { rows } = await refreshFeedScores();
+	console.log(`Refreshed feed ranking scores for ${rows} published items`);
 }
 
 async function runRollup() {
@@ -76,13 +83,20 @@ switch (command) {
 	case "cleanup":
 		await runCleanup();
 		break;
+	case "scores":
+		await runScores();
+		break;
 	case "nightly":
 		await runRollup();
+		// Downloads keep the popularity term current as they happen; this is
+		// what retires downloads that have aged out of the window and re-applies
+		// recency decay. Skip it and the feed slowly ranks on stale popularity.
+		await runScores();
 		await runCleanup();
 		break;
 	default:
 		console.error(
-			`Unknown job "${command ?? ""}". Expected: nightly, rollup, cleanup.`,
+			`Unknown job "${command ?? ""}". Expected: nightly, rollup, scores, cleanup.`,
 		);
 		process.exit(1);
 }

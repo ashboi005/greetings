@@ -8,6 +8,7 @@
  */
 
 import { db } from "@greetings/db";
+import { bumpedBaseScore } from "@greetings/db/feed-score";
 import {
 	content,
 	contentAssets,
@@ -121,10 +122,21 @@ export async function recordDownload(input: {
 
 		// Incremented in SQL rather than read-modify-write, so concurrent
 		// downloads cannot lose an increment.
-		await tx
-			.update(content)
-			.set({ downloadCount: sql`${content.downloadCount} + 1` })
-			.where(eq(content.id, input.contentId));
+		//
+		// The feed's ranking score is bumped in the same statement. It could
+		// have been left to the nightly refresh — the popularity term is stored
+		// precisely so the feed does not count events per request — but that
+		// would mean a post taking off this morning was not ranked as popular
+		// until tomorrow. Folding it in here costs nothing extra: it is the same
+		// single-row update, and the nightly pass still corrects for downloads
+		// ageing out of the window, which an increment alone can never do.
+		await tx.execute(sql`
+			UPDATE content SET
+				download_count = download_count + 1,
+				recent_downloads = recent_downloads + 1,
+				base_score = ${bumpedBaseScore}
+			WHERE id = ${input.contentId}
+		`);
 	});
 
 	return { url, expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS, recorded: true };

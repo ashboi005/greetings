@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { refreshFeedScores } from "@greetings/db/feed-score";
 import { content, downloadEvents } from "@greetings/db/schema";
 import { eq } from "drizzle-orm";
 import { createApp } from "../src/app";
-import { currentBucket } from "../src/modules/feed/ranking";
 import { testDb, truncateAll } from "./db";
 import { fakeObjectStorage, fakeTokenVerifier } from "./fakes";
 import { authHelper, client, seedReference } from "./helpers";
@@ -68,6 +68,13 @@ async function publish(options: {
 			.update(content)
 			.set({ publishedAt: options.publishedAt })
 			.where(eq(content.id, id));
+
+		// published_at feeds the stored ranking score, which was written when
+		// the item was approved a moment ago. Backdating the column behind the
+		// API's back leaves the score describing a publication time that no
+		// longer exists, so it has to be recomputed — the same refresh the
+		// nightly job runs.
+		await refreshFeedScores();
 	}
 
 	return id;
@@ -99,6 +106,13 @@ async function recordDownloads(contentId: string, count: number, at: Date) {
 			createdAt: at,
 		})),
 	);
+
+	// Events written straight to the table skip the download endpoint, which is
+	// what normally folds a download into the ranking score. The nightly refresh
+	// is the other path to the same place, and the only one that can account for
+	// events backdated out of the popularity window — which is exactly what
+	// these tests need to arrange.
+	await refreshFeedScores();
 }
 
 /** An onboarded end user with a region and languages. */
@@ -334,12 +348,20 @@ describe("pagination stability", () => {
 		expect(res.body.error.code).toBe("BAD_REQUEST");
 	});
 
-	test("the bucket is stable within the hour", () => {
-		const base = new Date("2026-08-08T14:00:00Z");
-		const later = new Date("2026-08-08T14:59:59Z");
-		const nextHour = new Date("2026-08-08T15:00:00Z");
+	test("the ranking does not move between requests", async () => {
+		// Pages used to be scored against `now()`, so an item could slide across
+		// a page boundary between the first request and the second and be
+		// skipped. Scores are stored now, so two identical requests a moment
+		// apart must return the identical order — that is what makes the keyset
+		// cursor exact rather than approximately right.
+		const token = await reader("IN-MH", ["hi"]);
 
-		expect(currentBucket(base)).toBe(currentBucket(later));
-		expect(currentBucket(nextHour)).not.toBe(currentBucket(base));
+		const first = await api.get("/v1/feed?limit=10", { token });
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const second = await api.get("/v1/feed?limit=10", { token });
+
+		expect(second.body.items.map((i: { id: string }) => i.id)).toEqual(
+			first.body.items.map((i: { id: string }) => i.id),
+		);
 	});
 });

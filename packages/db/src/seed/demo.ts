@@ -12,6 +12,7 @@
  */
 
 import { eq, like } from "drizzle-orm";
+import { refreshFeedScores } from "../feed-score";
 import { db } from "../index";
 import {
 	content,
@@ -216,9 +217,14 @@ export async function seedDemoData(): Promise<{
 
 		await db
 			.update(content)
-			.set({ downloadCount: count })
+			.set({ downloadCount: count, recentDownloads: count })
 			.where(eq(content.id, id));
 	}
+
+	// The feed ranks on a stored score, and everything above wrote rows
+	// directly rather than through the API that normally maintains it. Without
+	// this the demo feed would be ordered arbitrarily.
+	await refreshFeedScores();
 
 	return {
 		designers: DESIGNERS.length,

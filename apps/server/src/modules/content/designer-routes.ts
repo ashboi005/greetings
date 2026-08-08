@@ -8,7 +8,7 @@ import {
 	regions,
 	tags,
 } from "@greetings/db/schema";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest, conflict, notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
@@ -307,15 +307,30 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 				}
 
 				const id = crypto.randomUUID();
-				await db.insert(contentAssets).values({
-					id,
-					contentId: params.id,
-					storageKey: body.storageKey,
-					mimeType: object.contentType,
-					width: body.width,
-					height: body.height,
-					bytes: object.size,
-					checksum: body.checksum,
+
+				await db.transaction(async (tx) => {
+					await tx.insert(contentAssets).values({
+						id,
+						contentId: params.id,
+						storageKey: body.storageKey,
+						mimeType: object.contentType,
+						width: body.width,
+						height: body.height,
+						bytes: object.size,
+						checksum: body.checksum,
+					});
+
+					// The feed shows one image per item and reads it straight off
+					// the content row rather than joining. The first confirmed
+					// upload is that image; later ones do not displace it, so a
+					// designer adding a second asset does not silently change what
+					// everyone already sees.
+					await tx
+						.update(content)
+						.set({ primaryAssetKey: body.storageKey })
+						.where(
+							and(eq(content.id, params.id), isNull(content.primaryAssetKey)),
+						);
 				});
 
 				return { id, bytes: object.size, mimeType: object.contentType };
