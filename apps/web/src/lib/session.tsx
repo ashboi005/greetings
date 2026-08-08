@@ -14,7 +14,12 @@
  */
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, type CurrentUser, type UserRole } from "./api";
+import {
+	api,
+	type CurrentUser,
+	setUnauthenticatedHandler,
+	type UserRole,
+} from "./api";
 
 interface SessionState {
 	user: CurrentUser | null;
@@ -44,8 +49,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 		}
 	};
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: this establishes the session once, on mount; refresh is exposed for callers that need to re-check it
 	useEffect(() => {
 		void refresh();
+
+		// Any 401 from anywhere in the app means the session this provider is
+		// holding is gone. Clearing it is enough: PanelShell watches `user` and
+		// sends them to sign in.
+		setUnauthenticatedHandler(() => setUser(null));
+		return () => setUnauthenticatedHandler(null);
 	}, []);
 
 	return (

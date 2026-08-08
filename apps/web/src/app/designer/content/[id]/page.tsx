@@ -200,8 +200,7 @@ function ImageSection({
 				<div className="mb-3 flex flex-wrap gap-3">
 					{item.assets.map((asset) =>
 						asset.previewUrl ? (
-							// biome-ignore lint/performance/noImgElement: a signed URL from
-							// object storage cannot be served through next/image's optimiser.
+							// biome-ignore lint/performance/noImgElement: a signed storage URL cannot be served through next/image's optimiser
 							<img
 								alt=""
 								className="max-h-64 w-auto border bg-muted"
@@ -297,7 +296,9 @@ function TagSection({
 	};
 
 	const grouped = allTags.reduce<Record<string, Tag[]>>((acc, tag) => {
-		(acc[tag.category] ??= []).push(tag);
+		const bucket = acc[tag.category];
+		if (bucket) bucket.push(tag);
+		else acc[tag.category] = [tag];
 		return acc;
 	}, {});
 

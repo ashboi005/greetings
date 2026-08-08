@@ -11,7 +11,6 @@ import { db } from "@greetings/db";
 import { bumpedBaseScore } from "@greetings/db/feed-score";
 import {
 	content,
-	contentAssets,
 	type DownloadSource,
 	downloadEvents,
 	downloadIdempotency,
@@ -52,6 +51,12 @@ export async function recordDownload(input: {
 			status: content.status,
 			visibilityHold: content.visibilityHold,
 			primaryLanguage: content.primaryLanguage,
+			// The same key the feed showed. Reading it from here rather than
+			// looking up content_assets separately is one fewer query on the
+			// busiest write path, and — more importantly — makes it impossible
+			// for the tile someone tapped and the file they receive to be
+			// different images.
+			storageKey: content.primaryAssetKey,
 		})
 		.from(content)
 		.where(eq(content.id, input.contentId))
@@ -67,17 +72,10 @@ export async function recordDownload(input: {
 		});
 	}
 
-	const [asset] = await db
-		.select({ storageKey: contentAssets.storageKey })
-		.from(contentAssets)
-		.where(eq(contentAssets.contentId, input.contentId))
-		.orderBy(contentAssets.createdAt)
-		.limit(1);
-
-	if (!asset) throw notFound("This content has no image.");
+	if (!item.storageKey) throw notFound("This content has no image.");
 
 	const url = input.storage.presignDownload({
-		key: asset.storageKey,
+		key: item.storageKey,
 		expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
 	});
 

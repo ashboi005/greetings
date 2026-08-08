@@ -49,6 +49,8 @@ const TIMELINE_KINDS = [
 ] as const;
 
 interface TimelineRow {
+	/** Stable across requests, so a client can key on it. */
+	id: string;
 	kind: (typeof TIMELINE_KINDS)[number];
 	at: Date;
 	actorId: string | null;
@@ -102,6 +104,7 @@ export function adminAuditRoutes() {
 							-- Creation is not a moderation action, but "who made this"
 							-- is the first question anyone asks of an audit trail.
 							SELECT
+								'created:' || c.id AS entry_id,
 								'created'::text  AS kind,
 								c.created_at     AS at,
 								c.designer_id    AS actor_id,
@@ -113,6 +116,7 @@ export function adminAuditRoutes() {
 							UNION ALL
 
 							SELECT
+								'action:' || ma.id,
 								ma.action::text,
 								ma.created_at,
 								ma.actor_id,
@@ -124,6 +128,7 @@ export function adminAuditRoutes() {
 							UNION ALL
 
 							SELECT
+								'report:' || rp.id,
 								'reported'::text,
 								rp.created_at,
 								rp.reporter_id,
@@ -135,6 +140,7 @@ export function adminAuditRoutes() {
 							UNION ALL
 
 							SELECT
+								'resolved:' || rp.id,
 								'report_resolved'::text,
 								rp.resolved_at,
 								rp.resolved_by,
@@ -145,6 +151,7 @@ export function adminAuditRoutes() {
 								AND rp.resolved_at IS NOT NULL
 						)
 						SELECT
+							e.entry_id    AS "id",
 							e.kind,
 							e.at,
 							e.actor_id    AS "actorId",
@@ -164,6 +171,10 @@ export function adminAuditRoutes() {
 				return {
 					content: item,
 					timeline: timeline.map((row) => ({
+						// Stable across requests, so a client can key on it. Two
+						// reports filed in the same millisecond would otherwise be
+						// indistinguishable.
+						id: row.id,
 						kind: row.kind,
 						at: row.at,
 						// Null actor is the system acting on its own — the automatic

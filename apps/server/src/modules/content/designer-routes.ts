@@ -8,7 +8,7 @@ import {
 	regions,
 	tags,
 } from "@greetings/db/schema";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest, conflict, notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
@@ -317,7 +317,18 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 
 				const id = crypto.randomUUID();
 
-				await db.transaction(async (tx) => {
+				// Confirming an image *replaces* whatever was there. An item shows
+				// exactly one picture — the feed reads a single key off the content
+				// row — so a second asset would be storage nobody ever sees, and a
+				// designer who uploaded the wrong file would have no way to correct
+				// it. This is only reachable while the item is a draft or rejected,
+				// so nothing an admin has approved is being changed underneath them.
+				const superseded = await db.transaction(async (tx) => {
+					const previous = await tx
+						.delete(contentAssets)
+						.where(eq(contentAssets.contentId, params.id))
+						.returning({ storageKey: contentAssets.storageKey });
+
 					await tx.insert(contentAssets).values({
 						id,
 						contentId: params.id,
@@ -329,20 +340,32 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 						checksum: body.checksum,
 					});
 
-					// The feed shows one image per item and reads it straight off
-					// the content row rather than joining. The first confirmed
-					// upload is that image; later ones do not displace it, so a
-					// designer adding a second asset does not silently change what
-					// everyone already sees.
 					await tx
 						.update(content)
 						.set({ primaryAssetKey: body.storageKey })
-						.where(
-							and(eq(content.id, params.id), isNull(content.primaryAssetKey)),
-						);
+						.where(eq(content.id, params.id));
+
+					return previous.map((row) => row.storageKey);
 				});
 
-				return { id, bytes: object.size, mimeType: object.contentType };
+				// After the commit, and best-effort: the upload has succeeded as far
+				// as the designer is concerned, and a storage hiccup here should not
+				// turn that into a failure. Anything left behind is swept by the
+				// nightly job, which lists the bucket rather than the database.
+				for (const key of superseded) {
+					try {
+						await storage().delete(key);
+					} catch (cause) {
+						console.warn(`Could not delete superseded object ${key}:`, cause);
+					}
+				}
+
+				return {
+					id,
+					bytes: object.size,
+					mimeType: object.contentType,
+					replaced: superseded.length,
+				};
 			},
 			{
 				requireRole: ["designer"],
@@ -365,7 +388,24 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 				const designer = requireUser(currentUser);
 
 				const [row] = await db
-					.select()
+					// Named columns, not `select()`. The whole row carries the
+					// generated search vector and the feed's ranking internals —
+					// none of which a client has any use for, and the tsvector grows
+					// with the description.
+					.select({
+						id: content.id,
+						title: content.title,
+						description: content.description,
+						status: content.status,
+						primaryLanguage: content.primaryLanguage,
+						regionCode: content.regionCode,
+						downloadCount: content.downloadCount,
+						visibilityHold: content.visibilityHold,
+						rejectionReason: content.rejectionReason,
+						submittedAt: content.submittedAt,
+						publishedAt: content.publishedAt,
+						createdAt: content.createdAt,
+					})
 					.from(content)
 					.where(
 						and(eq(content.id, params.id), eq(content.designerId, designer.id)),

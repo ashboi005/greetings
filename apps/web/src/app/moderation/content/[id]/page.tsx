@@ -138,8 +138,7 @@ function Review() {
 					<div className="flex flex-wrap gap-3">
 						{item.assets.map((asset) =>
 							asset.previewUrl ? (
-								// biome-ignore lint/performance/noImgElement: a signed storage
-								// URL cannot go through next/image's optimiser.
+								// biome-ignore lint/performance/noImgElement: a signed storage URL cannot be served through next/image's optimiser
 								<img
 									alt=""
 									className="max-h-[28rem] w-auto border bg-muted"

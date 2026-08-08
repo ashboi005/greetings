@@ -142,7 +142,11 @@ export async function transition(
 	// Anything that makes an item visible needs a ranking score before the
 	// transaction commits, or it goes live scored zero and sits at the bottom of
 	// every feed until the nightly refresh notices it.
-	if (rule.to === "published") {
+	//
+	// `hold` also lands on `published` — it hides an item without changing its
+	// status — but nothing about its ranking has changed, and this runs inside
+	// the report-threshold transaction, which already holds a row lock.
+	if (rule.to === "published" && input.action !== "hold") {
 		await scoreOne(tx, input.contentId);
 	}
 

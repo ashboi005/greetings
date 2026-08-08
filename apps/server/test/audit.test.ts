@@ -530,3 +530,37 @@ interface TimelineEntry {
 	reason: string | null;
 	note: string | null;
 }
+
+describe("timeline identity", () => {
+	test("every entry carries a stable, unique id", async () => {
+		const id = await publish("Keyed");
+		const reporter = await auth.signIn();
+		await api.post(`/v1/content/${id}/report`, {
+			token: reporter.token,
+			body: { reason: "spam" },
+		});
+		await api.post(`/v1/admin/content/${id}/remove`, {
+			token: admin.token,
+			body: { reason: "gone" },
+		});
+
+		const read = () =>
+			api
+				.get(`/v1/admin/content/${id}/audit`, { token: admin.token })
+				.then((res) =>
+					(res.body.timeline as { id: string }[]).map((e) => e.id),
+				);
+
+		const first = await read();
+
+		// Clients key lists on this. An index would collide for two reports
+		// filed in the same millisecond, and a blank would collide for all of
+		// them — which is what shipped until it was checked against a server.
+		expect(first.every((entryId) => Boolean(entryId))).toBe(true);
+		expect(new Set(first).size).toBe(first.length);
+
+		// Stable: the same entry keeps its id across requests, so React does not
+		// tear down and rebuild the list on every poll.
+		expect(await read()).toEqual(first);
+	});
+});

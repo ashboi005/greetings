@@ -31,6 +31,21 @@ export class ApiError extends Error {
 	}
 }
 
+/**
+ * Called whenever the server says the caller is not authenticated.
+ *
+ * A session can expire while someone is sitting on a screen. Without this, the
+ * next action shows "Authentication required" in a red box and the person is
+ * stuck: the panel still looks signed in, because the session was checked once
+ * at mount and never again. The provider registers a handler that clears the
+ * session, which sends them to the sign-in page.
+ */
+let onUnauthenticated: (() => void) | null = null;
+
+export function setUnauthenticatedHandler(handler: (() => void) | null) {
+	onUnauthenticated = handler;
+}
+
 export interface ApiOptions {
 	method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 	body?: unknown;
@@ -61,6 +76,8 @@ export async function api<T>(
 		const envelope = parsed as {
 			error?: { code?: string; message?: string; details?: unknown };
 		} | null;
+
+		if (response.status === 401) onUnauthenticated?.();
 
 		throw new ApiError(
 			response.status,
@@ -207,6 +224,8 @@ export interface AdminContentRow {
 }
 
 export interface TimelineEntry {
+	/** Stable across requests — safe to use as a React key. */
+	id: string;
 	kind: string;
 	at: string;
 	actor: { id: string; name: string | null; role: string | null } | null;

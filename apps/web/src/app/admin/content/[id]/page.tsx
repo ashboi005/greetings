@@ -133,7 +133,7 @@ function Audit() {
 				{timeline.map((entry, index) => (
 					<Entry
 						entry={entry}
-						key={`${entry.kind}-${entry.at}-${index}`}
+						key={entry.id}
 						last={index === timeline.length - 1}
 					/>
 				))}

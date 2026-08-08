@@ -117,6 +117,7 @@ export function Field({
 	children: ReactNode;
 }) {
 	return (
+		// biome-ignore lint/a11y/noLabelWithoutControl: the control is passed as children and wrapped by this label, which associates them implicitly — the rule cannot see through the prop
 		<label className="block">
 			<span className="mb-1 block font-medium text-sm">{label}</span>
 			{children}

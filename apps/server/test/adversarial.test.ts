@@ -406,3 +406,101 @@ describe("oversized input", () => {
 		expect([413, 422]).toContain(res.status);
 	});
 });
+
+describe("replacing an image", () => {
+	async function uploadTo(id: string) {
+		const url = await api.post(`/v1/designer/content/${id}/upload-url`, {
+			token: designer.token,
+			body: { mimeType: "image/jpeg", bytes: 2048 },
+		});
+		r2.putObject(url.body.storageKey);
+		await api.post(`/v1/designer/content/${id}/assets`, {
+			token: designer.token,
+			body: { storageKey: url.body.storageKey, width: 1, height: 1 },
+		});
+		return url.body.storageKey as string;
+	}
+
+	test("leaves one image, and it is the new one", async () => {
+		const created = await api.post("/v1/designer/content", {
+			token: designer.token,
+			body: { title: "Wrong file first", primaryLanguage: "hi" },
+		});
+		const id = created.body.id as string;
+
+		const first = await uploadTo(id);
+		const second = await uploadTo(id);
+
+		const detail = await api.get(`/v1/designer/content/${id}`, {
+			token: designer.token,
+		});
+
+		// A second asset nobody can ever see is storage being paid for and a
+		// designer with no way to correct a mistake.
+		expect(detail.body.assets).toHaveLength(1);
+		expect(detail.body.assets[0].storageKey).toBe(second);
+		expect(r2.has(first)).toBe(false);
+	});
+
+	test("is what a reader actually downloads", async () => {
+		const created = await api.post("/v1/designer/content", {
+			token: designer.token,
+			body: { title: "Corrected", primaryLanguage: "hi" },
+		});
+		const id = created.body.id as string;
+
+		await uploadTo(id);
+		const corrected = await uploadTo(id);
+
+		await api.put(`/v1/designer/content/${id}/tags`, {
+			token: designer.token,
+			body: { tagIds: ["tag_good-morning"] },
+		});
+		await api.post(`/v1/designer/content/${id}/submit`, {
+			token: designer.token,
+		});
+		await api.post(`/v1/admin/content/${id}/approve`, { token: admin.token });
+
+		const reader = await auth.signIn();
+		await api.put("/v1/me/profile", {
+			token: reader.token,
+			body: { regionCode: "IN-MH", languages: ["hi"] },
+		});
+
+		const feed = await api.get("/v1/feed", { token: reader.token });
+		const tile = feed.body.items.find((i: { id: string }) => i.id === id);
+		const download = await api.post(`/v1/content/${id}/download`, {
+			token: reader.token,
+		});
+
+		// The tile someone taps and the file they receive must be the same
+		// image. These used to be read from two different places.
+		expect(tile.storageKey).toBe(corrected);
+		expect(download.body.url).toContain(corrected);
+	});
+});
+
+describe("what the designer detail endpoint returns", () => {
+	test("does not leak search or ranking internals", async () => {
+		const created = await api.post("/v1/designer/content", {
+			token: designer.token,
+			body: { title: "Private internals", primaryLanguage: "hi" },
+		});
+
+		const detail = await api.get(`/v1/designer/content/${created.body.id}`, {
+			token: designer.token,
+		});
+
+		// `select()` returns the whole row, including the generated tsvector and
+		// the feed's stored score. Neither is any use to a client, and the
+		// tsvector grows with the description.
+		for (const leaked of [
+			"titleTsv",
+			"baseScore",
+			"recentDownloads",
+			"primaryAssetKey",
+		]) {
+			expect(Object.keys(detail.body)).not.toContain(leaked);
+		}
+	});
+});

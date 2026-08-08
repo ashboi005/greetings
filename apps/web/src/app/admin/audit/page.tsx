@@ -1,7 +1,6 @@
 "use client";
 
 import { Button } from "@greetings/ui/components/button";
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
 	Empty,
@@ -94,10 +93,9 @@ function usePaged<T>(path: string) {
 		[path, cursor],
 	);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: loadMore changes identity whenever the cursor moves, so depending on it would reload page one after every "show older"
 	useEffect(() => {
 		void loadMore(true);
-		// Deliberately only on mount: loadMore changes identity with the cursor,
-		// and depending on it here would reload the first page after every fetch.
 	}, []);
 
 	return { items, cursor, error, loading, loadMore };
