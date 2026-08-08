@@ -144,6 +144,11 @@ than tables, and the upload goes straight from the browser to object storage
 without passing through the API, so a slow connection is not made slower by an
 extra hop.
 
+**Cookies are `SameSite=None; Secure`**, because the panels and the API are
+separate origins. Chrome treats `localhost` as trustworthy so this works in
+development over plain HTTP, but any other environment must serve both over
+HTTPS or the session cookie will not be sent.
+
 **Without R2 credentials** the panels still work — previews come back null and
 the image slot says so, rather than the whole review screen failing over a
 thumbnail.
