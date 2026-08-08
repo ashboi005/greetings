@@ -125,6 +125,31 @@ export function createR2Storage(config: R2Config): ObjectStorage {
 	};
 }
 
+/** How long a panel's preview URL stays valid. */
+export const PREVIEW_URL_TTL_SECONDS = 5 * 60;
+
+/**
+ * Attaches a short-lived viewing URL to each asset.
+ *
+ * Deliberately separate from the download endpoint. A reviewer has to see an
+ * image to judge it and a designer has to see their own upload, and neither is
+ * a download — routing those through the counted endpoint would inflate the
+ * numbers designers are measured on with the clicks of the people assessing
+ * them. The objects are still not public: this is a signed URL that expires.
+ */
+export function withPreviews<T extends { storageKey: string }>(
+	assets: T[],
+	storage: ObjectStorage,
+): (T & { previewUrl: string })[] {
+	return assets.map((asset) => ({
+		...asset,
+		previewUrl: storage.presignDownload({
+			key: asset.storageKey,
+			expiresInSeconds: PREVIEW_URL_TTL_SECONDS,
+		}),
+	}));
+}
+
 /** The prefix every object for one piece of content lives under. */
 export function contentPrefix(contentId: string): string {
 	return `content/${contentId}/`;

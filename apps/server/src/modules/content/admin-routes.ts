@@ -11,6 +11,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { Elysia, t } from "elysia";
 import { notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
+import { type ObjectStorage, withPreviews } from "../../lib/storage";
 import { authGuard, requireUser } from "../auth/session";
 import { availableActions, transition } from "./lifecycle";
 
@@ -25,7 +26,7 @@ const actor = alias(userTable, "actor");
  *
  * Nothing reaches an end user without passing through here.
  */
-export function adminContentRoutes() {
+export function adminContentRoutes(storage: () => ObjectStorage) {
 	return new Elysia({ prefix: "/v1/admin" })
 		.use(authGuard)
 
@@ -196,7 +197,10 @@ export function adminContentRoutes() {
 
 				return {
 					...row,
-					assets,
+					// Reviewers need to see the image. A signed preview rather than
+					// the download endpoint, so assessing content never counts as
+					// consuming it.
+					assets: withPreviews(assets, storage()),
 					history,
 					availableActions: availableActions(row.status),
 				};

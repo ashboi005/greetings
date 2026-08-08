@@ -133,7 +133,7 @@ export function createApp(options: AppOptions = {}) {
 			.use(adminRoleRoutes())
 			.use(adminAuditRoutes())
 			.use(designerContentRoutes(getStorage))
-			.use(adminContentRoutes())
+			.use(adminContentRoutes(getStorage))
 			.use(feedRoutes())
 			.use(downloadRoutes(getStorage))
 			.use(moderationRoutes())

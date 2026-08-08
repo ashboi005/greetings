@@ -12,7 +12,11 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest, conflict, notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
-import { type ObjectStorage, purgeContentObjects } from "../../lib/storage";
+import {
+	type ObjectStorage,
+	purgeContentObjects,
+	withPreviews,
+} from "../../lib/storage";
 import { authGuard, requireUser } from "../auth/session";
 import { transition } from "./lifecycle";
 
@@ -346,6 +350,63 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 				detail: {
 					tags: ["Designer"],
 					summary: "Confirm an uploaded image",
+				},
+			},
+		)
+
+		.get(
+			"/content/:id",
+			async ({ currentUser, params }) => {
+				const designer = requireUser(currentUser);
+
+				const [row] = await db
+					.select()
+					.from(content)
+					.where(
+						and(
+							eq(content.id, params.id),
+							eq(content.designerId, designer.id),
+						),
+					)
+					.limit(1);
+
+				if (!row) throw notFound("No such content.");
+
+				const assets = await db
+					.select({
+						id: contentAssets.id,
+						storageKey: contentAssets.storageKey,
+						mimeType: contentAssets.mimeType,
+						width: contentAssets.width,
+						height: contentAssets.height,
+						bytes: contentAssets.bytes,
+					})
+					.from(contentAssets)
+					.where(eq(contentAssets.contentId, params.id))
+					.orderBy(contentAssets.createdAt);
+
+				const applied = await db
+					.select({ id: tags.id, slug: tags.slug, label: tags.label })
+					.from(contentTags)
+					.innerJoin(tags, eq(tags.id, contentTags.tagId))
+					.where(eq(contentTags.contentId, params.id));
+
+				return {
+					...row,
+					tags: applied,
+					assets: withPreviews(assets, storage()),
+				};
+			},
+			{
+				requireRole: ["designer"],
+				detail: {
+					tags: ["Designer"],
+					summary: "One of the caller's own items, with images and tags",
+					description:
+						"Assets carry a `previewUrl` valid for five minutes. Previews do " +
+						"not count as downloads — looking at your own work is not a " +
+						"download, and counting it would corrupt the numbers designers " +
+						"are measured on.",
 				},
 			},
 		)
