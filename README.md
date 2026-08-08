@@ -45,16 +45,46 @@ sign in once with Google, set `SUPER_ADMIN_EMAIL` in `apps/server/.env`, then re
 
 ### Scheduled work
 
-One job needs a schedule in every environment:
+One job needs a schedule in every environment. Without it two things decay:
 
 ```bash
-bun run jobs nightly     # daily rollup + cleanup; idempotent, safe to retry
-bun run jobs rollup 2026-08-01 2026-08-07   # backfill a range
+bun run jobs nightly                        # rollup + rescore + cleanup
+bun run jobs rollup 2026-08-01 2026-08-07   # backfill a date range
+bun run jobs scores                         # feed ranking only
+bun run jobs cleanup                        # orphan drafts and expired keys only
 ```
 
-Analytics read pre-aggregated rows for past dates, so without this the dashboards lose history
-older than today. Every job is idempotent, so a missed night is repaired by the next run or a
-manual backfill.
+- **Analytics** read pre-aggregated rows for every date before today, so a missed night is a gap in
+  the dashboards' history.
+- **Feed ranking** reads a stored score. Downloads keep it current as they happen; the nightly pass
+  does the part an increment cannot — retiring downloads that have aged out of the seven-day window
+  and re-applying recency decay.
+
+Every job is idempotent: running it twice produces the same numbers as running it once, so a missed
+night is repaired by the next run or a manual backfill.
+
+### Configuration that matters in production
+
+`apps/server/.env.example` documents everything. Three are easy to get wrong:
+
+| Variable | Default | Why you would change it |
+|---|---|---|
+| `TRUST_PROXY_HEADERS` | `false` | **Set to `true` only if something in front of this server overwrites `x-forwarded-for`.** Left off behind a proxy, every request looks like it comes from the proxy. Turned on without one, any client can evade per-address rate limits by changing a header. |
+| `DATABASE_POOL_MAX` | `10` | Sized for four cores. More connections is not more throughput — past about twice the core count, backends contend for the same CPUs. Requests queue at the pool by design. |
+| `DATABASE_STATEMENT_TIMEOUT_MS` | `15000` | The ceiling for a query somebody is waiting on. Batch jobs raise it for their own transaction; this is not the knob for them. |
+
+### Performance notes
+
+Measured against 200,000 published items and 2,000,000 download events (see
+[the spec](docs/specs/greetings-backend.md), §7.1 and §12.2):
+
+- feed page, typical viewer — **3.4 ms**; a viewer with six languages — 61 ms
+- search with a term — ~98 ms
+- queries per request: 4 for `/v1/feed`, 2 for `/v1/auth/me`, 0 for auth on a cookie-cached web
+  request
+
+The spec's §12.3 lists the ceilings that have not been addressed, and §15.1 lists what is
+deliberately not built at all. Both are worth reading before adding anything.
 
 The API listens on `PORT` (default 3000). Interactive docs are at
 [http://localhost:3000/docs](http://localhost:3000/docs) — that generated OpenAPI document is the
@@ -158,7 +188,7 @@ greetings/
 - `bun run db:migrate:test`: Run migrations against the test database
 - `bun run db:seed`: Seed reference data and the bootstrap super admin
 - `bun run db:seed:demo`: Seed a sample dataset for a fresh environment (never in production)
-- `bun run jobs nightly`: Run the daily rollup and cleanup — schedule this
+- `bun run jobs nightly`: Daily rollup, feed rescore and cleanup — schedule this
 - `bun run db:studio`: Open database studio UI
 - `bun run check`: Run Biome formatting and linting
 - `bun run docker:build`: Build the Docker Compose images

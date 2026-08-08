@@ -1,6 +1,5 @@
 import { db } from "@greetings/db";
-import { userLanguages, userProfiles } from "@greetings/db/schema";
-import { eq } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest } from "../../lib/errors";
 import {
@@ -142,21 +141,35 @@ export function feedRoutes() {
 		);
 }
 
+/**
+ * The viewer's region and languages, in one round trip.
+ *
+ * These were two queries, which on the single busiest endpoint in the product
+ * is two round trips and two connection checkouts for one answer. The outer
+ * select is what guarantees a row even for someone who has never onboarded —
+ * both joins then miss and the defaults below apply.
+ */
 async function loadPreferences(userId: string) {
-	const [profile] = await db
-		.select({ regionCode: userProfiles.regionCode })
-		.from(userProfiles)
-		.where(eq(userProfiles.userId, userId))
-		.limit(1);
+	const result = await db.execute(sql`
+		SELECT
+			p.region_code AS "regionCode",
+			COALESCE(
+				array_agg(ul.language_code) FILTER (WHERE ul.language_code IS NOT NULL),
+				'{}'
+			) AS languages
+		FROM (SELECT ${userId}::text AS uid) me
+		LEFT JOIN user_profiles p ON p.user_id = me.uid
+		LEFT JOIN user_languages ul ON ul.user_id = me.uid
+		GROUP BY p.region_code
+	`);
 
-	const languages = await db
-		.select({ code: userLanguages.languageCode })
-		.from(userLanguages)
-		.where(eq(userLanguages.userId, userId));
+	const row = result.rows[0] as
+		| { regionCode: string | null; languages: string[] }
+		| undefined;
 
 	return {
-		regionCode: profile?.regionCode ?? null,
-		languageCodes: languages.map((row) => row.code),
+		regionCode: row?.regionCode ?? null,
+		languageCodes: row?.languages ?? [],
 	};
 }
 

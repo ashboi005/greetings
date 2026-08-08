@@ -207,12 +207,79 @@ score = 2.0 × (content.primary_language ∈ user.preferred_languages)
 
 The global-content term is what guarantees a user in an underserved region never sees an empty feed.
 
-**Pagination stability.** Score depends on `now`, so a naive score cursor drifts between page
-fetches — users would see duplicates and gaps. Recency is therefore quantized to the hour and the
-cursor encodes `(nowBucket, score, id)`. Within an hour the ordering is fully deterministic.
+### 7.1 How it is executed
+
+The score above is the definition. Computing it that way — per row, per request, with a lateral
+count over `download_events` for every published item — was measured at **4,684 ms a page** against
+200,000 published items and 2,000,000 events. That is unusable, and at a tenth the catalogue it is
+still half a second.
+
+The score splits in two:
+
+```
+base   = recency_decay(published_at) + 0.5 × ln(1 + recent_downloads)   -- same for every viewer
+bonus  = 2.0 × language match + 1.5 × own region + 1.0 × global         -- one of six constants
+```
+
+`base` is stored on `content.base_score`. Because `bonus` takes only six values, the catalogue
+divides into six groups, and *within a group the ranking order is exactly `base_score` order* —
+which an index already holds. So the feed is six (or a few more, see below) index seeks that each
+read one page and stop, merged and re-ranked. Any item in the true top N is in its own group's top
+N, so this is an optimisation, not an approximation: the result is identical to scoring everything.
+
+Measured on the same 200k/2M dataset:
+
+| | before | after |
+|---|---|---|
+| feed page, viewer with region and 2 languages | 4,684 ms | **3.4 ms** |
+| second page by cursor | — | 3.6 ms |
+| viewer who has not onboarded | — | 2.6 ms |
+| viewer with 6 languages | — | 61 ms |
+| nightly rescore of all 200k items | — | 18 s |
+
+Three details are load-bearing and easy to lose:
+
+- **One branch per language, not `= ANY`.** A parameterised array cannot be combined with the
+  ordering, so Postgres reads the whole group and sorts it. Equality on a single value lets it walk
+  the index in order and stop. This is why cost grows with the viewer's language count.
+- **`ORDER BY … DESC NULLS LAST`.** Plain `DESC` means `NULLS FIRST` in Postgres, which does not
+  match how the indexes are built, and the planner silently falls back to a sort. Both columns are
+  `NOT NULL`, so this changes nothing about the result — only about whether the index is usable.
+- **The three partial indexes** on `content`, all `WHERE status = 'published' AND visibility_hold =
+  false`: `(base_score)`, `(primary_language, base_score)`, `(region_code, base_score)`.
+
+**What this costs.** `base_score` is a stored value, so it can be stale.
+
+- Popularity is *not* stale: a download bumps the counter and the score in the same statement that
+  was already running. What the nightly pass does is the part an increment cannot — retire downloads
+  that have aged out of the seven-day window.
+- Recency decays continuously but is only rewritten nightly. Between refreshes every item's recency
+  term shrinks by the same factor (≈0.91 over a day), so the ordering *by recency* is untouched;
+  only its weight against popularity drifts, by under a tenth of a point.
+- Newly published content is scored inside the transaction that publishes it, so nothing waits a day
+  to appear.
+- **Anything that writes `published_at` outside the publish path must re-run the refresh.** Nothing
+  in the application does; the demo seed and some tests do, and they call it.
+
+**Pagination stability.** The cursor is `(score, id)` and nothing more. It used to carry an
+hour-quantised clock, because scores were computed from `now()` and two pages of one session ranked
+against slightly different clocks — items could slide across the boundary and be skipped. Stored
+scores do not move between requests, so there is no clock left to pin.
+
+The per-group keyset uses `<=` rather than `<` on `base_score`, deliberately: subtracting a bonus and
+adding it back is not exact in floating point, and a strict comparison there could drop the row the
+next page should start with. The outer query applies the exact strict test against the score as it
+was issued, so no row can repeat.
+
+### 7.2 Search
 
 `GET /v1/search?q=&tags=&language=&region=&cursor=` — full-text match on `titleTsv`, trigram
 fallback for misspellings, tag filtering via join, ordered by `ts_rank` then recency.
+
+Search is *not* on the same footing as the feed: it still evaluates its predicate over the matching
+set rather than reading a prepared order. Measured at 200k items it is ~98 ms for a term and ~157 ms
+for a misspelling, which is acceptable for a query a user types and waits for, and is the next thing
+to look at if the catalogue grows another order of magnitude.
 
 ---
 
@@ -297,12 +364,135 @@ Token verification sits behind a `TokenVerifier` port, so tests never call Googl
   `/docs`. This generated document *is* the contract handed to the mobile developer.
 - **Errors** — one envelope, `{ error: { code, message, details? } }`, closed set of codes
 - **Pagination** — opaque base64 cursors everywhere; no offset pagination
-- **Env** — `packages/env` already validates with `@t3-oss/env-core` + zod and fails fast at boot.
-  Extend it with R2 credentials and `FIREBASE_PROJECT_ID`.
-- **Logging** — structured, via the `evlog` addon already wired into `apps/server/src/index.ts`
-- **Rate limiting** — per-IP and per-user on auth, download, and report endpoints
+- **Env** — `packages/env` validates with `@t3-oss/env-core` + zod and fails fast at boot
+- **Logging** — structured, via the `evlog` addon wired into `apps/server/src/index.ts`
 - **Ports for external dependencies** — `ObjectStorage` (R2) and `TokenVerifier` (Firebase) are
   interfaces with in-memory test doubles, so the suite runs hermetically
+
+### 12.1 Rate limiting
+
+Two layers, because neither works alone.
+
+**Per address** is the obvious one and the weaker. Behind a proxy the socket address is the proxy's,
+so the real client is in `x-forwarded-for` — but a client talking to this server *directly* sets
+that header itself, and a limiter that believes it can be evaded by changing it each request. So the
+forwarded headers are read only when `TRUST_PROXY_HEADERS=true`, which a deployment sets when
+something in front of it overwrites them. It defaults off: the unsafe direction should take a
+deliberate act.
+
+Even trusted, the per-address limit has to be loose here. Indian mobile carriers use carrier-grade
+NAT, so one address fronts thousands of genuine users — sign-in allows 600/minute per address for
+that reason, not by accident.
+
+**Global** is the one that holds under attack: a ceiling on how much of an expensive operation the
+process will do per minute in total, regardless of who asks. Sign-in verification is capped at
+6,000/minute — a hundred a second, far past anything this product will see — so evading the address
+limit buys nothing, and past the ceiling callers are refused in microseconds instead of the server
+queueing signature checks until it falls over.
+
+Authenticated endpoints key on user id, which no header can forge. Downloads allow 120/minute per
+user; reporting is limited durably in the database (20/hour) because that limit protects the admin
+queue rather than the server and must survive a restart.
+
+The store is in-process, which is a deliberate limitation: counters are per instance, so N instances
+allow N times the limit, and they reset on restart. Neither matters for a single container. When it
+stops being one, replace the store behind the `RateLimitStore` interface — no call site changes.
+
+### 12.2 Behaviour under load
+
+The intent is that the server gets slower and then refuses work, rather than falling over.
+
+- **Connection pool, default 10.** More is not faster: past roughly twice the core count, Postgres
+  backends contend for the same CPUs and every query slows without any finishing sooner. Requests
+  queue at the pool, which is where queueing belongs — ten queries running and the rest waiting
+  finishes more work than two hundred running at once. `DATABASE_POOL_MAX` exists because the right
+  number is a property of the machine.
+- **Bounded wait for a connection** (5 s). An unbounded queue holds sockets open for work whose
+  caller left minutes ago.
+- **`statement_timeout`** (15 s default). A query with no ceiling holds its connection until it
+  finishes, and a disconnected client does not stop it. Batch jobs raise this for their own
+  transaction only, via `set_config(..., true)`, so the request-path ceiling is never widened.
+- **`idle_in_transaction_session_timeout`.** A transaction left open by a crashed process holds its
+  locks and pins the vacuum horizon indefinitely.
+- **Request body limit** (1 MB default). Bun buffers a body in memory before any handler or schema
+  sees it, so without a ceiling a few large POSTs are an out-of-memory kill rather than a 413.
+  Nothing legitimate comes close: images go straight to R2 and never pass through this process.
+- **Graceful shutdown.** SIGTERM stops the listener and waits for in-flight requests, with a 10 s
+  backstop. Without it a deploy kills requests mid-flight — a download counted but never returned.
+- **UTC pinned on every connection.** Every timestamp column is `timestamp without time zone` and
+  the analytics rollup buckets by UTC calendar day, so the day boundary has to belong to the
+  application rather than to whatever the host clock is set to.
+- **Idle-client errors are handled.** An error on an idle pooled connection — the database
+  restarting, a network blip — is an unhandled `error` event, and node's default for that is to
+  crash the process. The pool recovers on its own; the process would not.
+
+Measured query counts per request: `GET /v1/feed` is 4 (session, user, preferences, feed);
+`GET /v1/auth/me` is 2. Web panel requests inside the cookie-cache window are 0 for auth, because
+the signed cookie carries the session and role.
+
+### 12.3 Scale ceilings, honestly
+
+- The feed is bounded by index reads and is not sensitive to catalogue size; it *is* sensitive to
+  how many languages a viewer selects (one branch each).
+- Search still scans its matching set. ~98 ms at 200k items; revisit past a million.
+- `download_events` is the fastest-growing table and is never pruned. Analytics read the daily
+  rollup for past dates, so query cost does not grow with it, but disk does. Partitioning by month
+  is the obvious next step and is not done.
+- `platformOverview` runs four unqualified `COUNT(*)`s. Fine for an admin dashboard at this size;
+  it will need caching before it needs rewriting.
+- The rate limiter and the session-resolution cache are per process. Running more than one instance
+  changes both, as described above.
+
+---
+
+## 12.4 Audit trail
+
+Every privileged action leaves a record, written by the code that performs it rather than by a
+separate logging layer that could be forgotten:
+
+| What | Where | Written by |
+|---|---|---|
+| Who created a piece of content | `content.designer_id`, `created_at` | the create route |
+| Every lifecycle move, with reason | `moderation_actions` | `transition()`, in the same transaction |
+| Who reviewed, and when | `content.reviewed_by`, `reviewed_at`, `rejection_reason` | `transition()` |
+| Who reported, and why | `reports` | the report route |
+| Who ruled on a report | `reports.resolved_by`, `resolved_at`, `resolution_note` | the resolve route |
+| Every role change, from and to | `role_change_log` | `applyRoleChange`, and invite consumption |
+| Invites offered and withdrawn | `role_invites`, incl. `revoked_at`/`revoked_by` | the roles routes |
+| Who downloaded what, when, from where | `download_events` | the download route |
+
+Two rules the design depends on:
+
+- **Append-only.** A correction is a new row, never an edit. `moderation_actions` has no update path.
+- **Ids, not names.** The log stores actor ids; names and emails are resolved when it is read. An
+  audit that recorded a display name would quietly rewrite itself when that name changed.
+
+Revoking a role invite is a soft revoke for the same reason — a `DELETE` that leaves no trace is a
+hole in the trail, and "a super admin offered someone admin and thought better of it" is exactly
+what the trail is for. The unique index ignores revoked rows so the address can be invited again
+immediately, and the sign-in path skips them so a withdrawn invite cannot still grant.
+
+**Reading it.** The records existed from M2 onwards but were reachable only through psql, which is
+not an audit trail so much as the raw material for one. The endpoints:
+
+| Endpoint | Who | What |
+|---|---|---|
+| `GET /v1/admin/content/:id/audit` | admin | one item's whole story: creation, every lifecycle move, every report and resolution, merged into one timeline newest-first, each with the person behind it |
+| `GET /v1/admin/audit/roles` | super admin | every role change ever made |
+| `GET /v1/admin/audit/actions` | admin | recent decisions across all content, filterable by moderator or action |
+| `GET /v1/admin/content` | admin | search every status — the way *in* to a specific item |
+| `GET /v1/admin/users` | admin | find a person, see their role and when it last changed |
+
+The timeline is one query with four `UNION ALL` branches rather than four round trips stitched
+together, so its ordering is the database's and cannot disagree with itself. `actor` is null where
+the system acted alone — currently only the automatic hold, and attributing that to an admin would
+be a lie.
+
+**Known limits.** Deleting content cascades its audit rows away; only drafts are ever deleted, by
+the designer or the orphan sweep, and nothing deletes published content. Per-user download history
+is recorded but deliberately not exposed — analytics answer the questions the product asks, and a
+"what has this person downloaded" screen is a surveillance feature nobody requested. Session
+IP/user-agent are captured by Better Auth but not surfaced.
 
 ---
 
@@ -316,9 +506,15 @@ Non-negotiable coverage:
 
 - **Every role guard** — each endpoint against each wrong role
 - **Every lifecycle transition**, including illegal ones
-- **Feed pagination stability** within an hour bucket: no duplicates, no gaps
+- **Feed pagination stability**: no duplicates, no gaps, and identical ordering across requests
 - **Download idempotency** under a repeated `Idempotency-Key`
 - **Rollup correctness** — `daily_content_stats` must equal a live aggregation of the same raw events
+- **Adversarial probes** (`test/adversarial.test.ts`) — tampered cursors, rate-limit evasion,
+  concurrent approval and concurrent report resolution, account-linking collisions, oversized bodies.
+  Every test in that file was written to fail first; the ones that passed stayed because the
+  property is worth pinning down.
+- **The audit trail** (`test/audit.test.ts`) — that after an item has been through the mill, a super
+  admin can say who did each thing and why, without opening a database client
 
 ---
 
@@ -334,6 +530,50 @@ Found while verifying the generated project. Each is addressed in the milestone 
 | ~~No OpenAPI plugin installed~~ — `@elysiajs/openapi` at `/docs` | done (M1) |
 | ~~`emailAndPassword` enabled in `packages/auth/src/index.ts`~~ — disabled | done (M2) |
 | `packages/db/src/schema/` still lacks the analytics tables | M5, M7 |
+
+---
+
+## 14g. Constraints discovered during the hardening pass
+
+Each of these began as a test written to fail, or a measurement that contradicted an assumption.
+
+**A parameterised `= ANY` cannot be combined with an ordering.** Postgres reads every row in the
+group and sorts. Splitting into one equality branch per value was the difference between 18 ms and
+0.2 ms per branch.
+
+**`ORDER BY x DESC` is `DESC NULLS FIRST`; Drizzle's `.desc()` emits `DESC NULLS LAST`.** They do
+not match, so the planner silently ignores the index and sorts. Nothing about this appears in the
+plan as an error — it just costs a hundred times more. Any query meant to ride an index built with
+`.desc()` must spell out `NULLS LAST`.
+
+**`SET LOCAL` takes no bind parameters.** Use `SELECT set_config(name, value, true)`, whose third
+argument is what makes it transaction-local.
+
+**Forwarded headers are client-controlled unless a proxy overwrites them.** Rate limiting that
+trusts them unconditionally is decoration. See §12.1.
+
+**Cursors are bound into `::timestamp` casts.** A string Postgres cannot parse leaves as a 500, so a
+tampered cursor pages whoever is on call for what is really a malformed request. Cursor timestamps
+are parsed in TypeScript before they reach the database.
+
+**The bucket, not the database, knows what was uploaded.** Cleanup driven by `content_assets` walks
+straight past objects that were presigned and PUT but never confirmed — a designer who uploads and
+closes the tab. Sweeping by key prefix is the only version that terminates.
+
+**A `DELETE` on an invite erased the audit trail.** Soft revoke instead, with the partial unique
+index and the sign-in path both taught to ignore revoked rows. The second of those is easy to
+forget and would have left withdrawn invites still granting.
+
+**CORS listed the methods the panels use, minus `PUT`** — which two live routes use. A browser
+preflight refuses before the request is ever made, so nothing server-side would ever have logged it.
+
+**A rejection with no edit endpoint is a dead end.** The reviewer tells the designer exactly what to
+fix and the designer has no way to fix it. Editing is confined to `draft` and `rejected`: an
+approval is of specific words, and letting them change afterwards would make review theatre.
+
+**Postgres cancelling a statement is the timeout working.** The nightly rescore hit the request-path
+`statement_timeout` at 200k rows. Batch work opts out for its own transaction rather than the
+ceiling being raised for everyone.
 
 ---
 
@@ -522,8 +762,50 @@ unconfigured R2 and left the rollup half-done; it now purges what it can and rep
 | **M6** | Reports, auto-hold threshold, admin resolution | 5 reports pull an item from the feed — **done** |
 | **M7** | Analytics endpoints, nightly rollup job | Rollup totals equal a live aggregation — **done** |
 | **M8** | Rate limits, production Dockerfiles, seed data, OpenAPI handoff review | Full end-to-end walkthrough passes — **done** |
+| **M9** | Audit endpoints, adversarial review, feed at scale, load hardening | Feed page under 5 ms at 200k items; a rotated header cannot evade the limiter — **done** |
 
 Each milestone lands with its tests green before the next begins.
+
+## 15.1 What is deliberately not built
+
+Knowing the shape of the hole matters as much as knowing what fills it.
+
+**No refresh tokens or token rotation.** Better Auth sessions are long-lived database rows; mobile
+holds one as a bearer token. Revocation is by deleting the row, which role changes already do.
+
+**No email or push notification of any kind.** A designer learns their content was rejected by
+opening the panel. There is no transport configured and no queue to put one behind.
+
+**No image processing.** No resizing, no thumbnails, no format conversion, no moderation scanning of
+pixels. Thumbnails are intended to come from Cloudflare Image Resizing URL parameters at the edge.
+The backend never sees image bytes at all, which is the property that keeps it cheap — and it means
+"is this image actually what the title claims" is answered by a human reviewer, not by software.
+
+**No soft delete for content.** Removal sets a status; only drafts are ever really deleted.
+
+**No multi-tenancy, no organisations, no teams.** Designers are individuals.
+
+**No i18n of API responses.** Error messages are English. The *content* is multilingual; the
+operator-facing strings are not, and the mobile app is expected to map error `code`s to its own
+translated copy rather than display `message` — which is why `code` is a closed set.
+
+**No caching layer.** No Redis, no CDN in front of the API. The feed is fast enough without one and
+adding a cache before it is needed would mean debugging staleness for no gain.
+
+**No per-user download history endpoint.** Recorded, deliberately not exposed. See §12.4.
+
+**No search relevance tuning against real data.** The trigram threshold is pg_trgm's default and the
+`simple` text-search configuration does no stemming, which is right for Hindi and Marathi and merely
+adequate for English. This wants revisiting once there is real content to tune against.
+
+**No admin edit of content.** An admin approves, rejects, removes or restores. They cannot fix a
+designer's typo, and giving them that power would mean an approval no longer refers to a fixed
+artefact.
+
+**Response schemas are declared for the mobile endpoints only.** Those cross a team boundary — a
+different developer builds against them — so they are validated at runtime and cannot drift from
+the published contract. The designer, admin and super-admin routes are consumed by the web panels in
+this same repository, where a type error catches the same class of mistake sooner and cheaper.
 
 ### End-to-end acceptance (after M7)
 
