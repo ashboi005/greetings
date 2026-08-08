@@ -57,3 +57,30 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+
+  # The nightly job, as its own long-lived process.
+  #
+  # Same image as the server — it needs the same schema, env validation and
+  # database client, and a second image would be a second thing to keep in
+  # step. A separate *container* rather than a timer inside the API, because
+  # the job rewrites every published row: running a copy per web instance is
+  # waste at best and lock contention at worst.
+  #
+  # It takes a Postgres advisory lock while it works, so scaling this to more
+  # than one replica is safe — the extras find the lock held and skip.
+  jobs:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    init: true
+    command: ["bun", "dist/jobs/run.mjs", "schedule"]
+    env_file:
+      - path: apps/server/.env
+        required: false
+    depends_on:
+      server:
+        condition: service_healthy
+    # No healthcheck and no ports: this process is asleep almost all the time,
+    # which no HTTP probe can distinguish from broken. Whether it is working is
+    # a question for the job_runs table, which is why that table exists.
+    restart: unless-stopped

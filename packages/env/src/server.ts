@@ -81,6 +81,20 @@ export const env = createEnv({
 			.min(1024)
 			.default(1024 * 1024),
 
+		/**
+		 * When the nightly job runs, as `HH:MM` in UTC.
+		 *
+		 * UTC deliberately, and not configurable to a local zone: the analytics
+		 * rollup buckets by UTC calendar day, so a schedule in local time would
+		 * drift against the day boundaries it exists to compute. Default is
+		 * shortly after midnight UTC, which is early morning in India — after the
+		 * day it summarises has closed, and before anyone looks at a dashboard.
+		 */
+		JOBS_SCHEDULE_UTC: z
+			.string()
+			.regex(/^\d{1,2}:\d{2}$/, 'Must look like "02:30"')
+			.default("02:30"),
+
 		NODE_ENV: z
 			.enum(["development", "production", "test"])
 			.default("development"),

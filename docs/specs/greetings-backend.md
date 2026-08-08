@@ -445,6 +445,57 @@ the signed cookie carries the session and role.
 
 ---
 
+### 12.5 Scheduled work
+
+One job runs daily: `rollup`, then `scores`, then `cleanup`, in that order —
+the rollup reads raw events the cleanup may prune, and the rescore does the same.
+
+It ships as a `jobs` container in `docker-compose.yml`, running the same image
+as the server. Three things it deliberately is not:
+
+- **Not a `sleep 86400` loop.** That drifts by each run's duration and resets on
+  every deploy, so "nightly at 2am" becomes "whenever the container last
+  restarted". The next occurrence of a wall-clock time is computed instead.
+- **Not a timer inside the API server.** The job rewrites every published row;
+  one copy per web instance is waste at best and lock contention at worst, and
+  it ties the schedule to how the API happens to be scaled.
+- **Not a host cron entry.** That works and is documented as an option, but it
+  lives outside the repo, the image and review — which is how a schedule
+  silently differs between two environments.
+
+**UTC, not local time.** Every timestamp column is `timestamp without time
+zone`, the rollup buckets by UTC calendar day, and connections pin
+`timezone=UTC`. A schedule in local time would drift against the boundaries it
+exists to compute.
+
+**A Postgres advisory lock** is held for the duration, on a dedicated connection
+— an advisory lock belongs to its session, and a pooled query would take it on
+whichever connection was free and then return that connection still holding it.
+Because it is a session lock it is released even if the process is killed, which
+a lock held in a table would not be. A manual run during a scheduled one, a
+second replica, or a run overrunning its window therefore skip rather than pile
+up.
+
+**Every run is recorded** in `job_runs`, before it starts and again when it
+ends. A scheduled job that leaves no trace has one failure mode nobody notices:
+not running. The container is asleep almost all the time, which no HTTP probe
+can distinguish from broken, so this table *is* the monitoring — and a row with
+a `started_at` and no `finished_at` is exactly what a crash mid-run looks like.
+It also lets the scheduler catch up: on boot it runs immediately if nothing has
+succeeded in the last 20 hours, bounded so that a week of downtime asks for a
+deliberate backfill rather than doing one automatically.
+
+**A failed run does not stop the scheduler.** Exiting on the first bad night
+would turn one failure into every subsequent night failing too; the failure is
+recorded either way.
+
+**Not automated:** migrations. A schema change needs `bun run db:migrate` before
+the deploy. Running them on boot would mean instances racing the same migration,
+so it stays a separate step — but it is a step, and forgetting it is how a
+deploy half-works.
+
+---
+
 ## 12.4 Audit trail
 
 Every privileged action leaves a record, written by the code that performs it rather than by a

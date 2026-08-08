@@ -78,6 +78,13 @@
 			"when": 1786166761084,
 			"tag": "0010_rich_inertia",
 			"breakpoints": true
+		},
+		{
+			"idx": 11,
+			"version": "7",
+			"when": 1786188001009,
+			"tag": "0011_slippery_goliath",
+			"breakpoints": true
 		}
 	]
 }

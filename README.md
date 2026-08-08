@@ -45,23 +45,63 @@ sign in once with Google, set `SUPER_ADMIN_EMAIL` in `apps/server/.env`, then re
 
 ### Scheduled work
 
-One job needs a schedule in every environment. Without it two things decay:
+One job needs to run daily. It is set up: `docker compose up` starts a `jobs`
+container alongside the server, which fires at **02:30 UTC** by default
+(`JOBS_SCHEDULE_UTC`). Nothing else to install.
 
 ```bash
-bun run jobs nightly                        # rollup + rescore + cleanup
+bun run jobs schedule                       # what the container runs
+bun run jobs nightly                        # the same work, once, by hand
 bun run jobs rollup 2026-08-01 2026-08-07   # backfill a date range
 bun run jobs scores                         # feed ranking only
 bun run jobs cleanup                        # orphan drafts and expired keys only
 ```
 
-- **Analytics** read pre-aggregated rows for every date before today, so a missed night is a gap in
-  the dashboards' history.
-- **Feed ranking** reads a stored score. Downloads keep it current as they happen; the nightly pass
-  does the part an increment cannot — retiring downloads that have aged out of the seven-day window
-  and re-applying recency decay.
+Without it, two things decay:
 
-Every job is idempotent: running it twice produces the same numbers as running it once, so a missed
-night is repaired by the next run or a manual backfill.
+- **Analytics** read pre-aggregated rows for every date before today, so a
+  missed night is a permanent gap in the dashboards' history.
+- **Feed ranking** reads a stored score. Downloads keep it current as they
+  happen; the nightly pass does the part an increment cannot — retiring
+  downloads that have aged out of the seven-day window and re-applying recency
+  decay.
+
+Four properties worth knowing:
+
+- **It fires at a wall-clock time, not every 24 hours.** A `sleep 86400` loop
+  drifts by each run's duration and resets on every deploy, so "nightly at 2am"
+  quietly becomes "whenever the container last restarted".
+- **It catches up.** If the machine was off when the job was due, it runs on
+  boot — bounded to 20 hours, because a week of downtime wants a deliberate
+  backfill, not an automatic one.
+- **It cannot overlap.** A Postgres advisory lock is held for the duration, so
+  a manual `bun run jobs nightly` during a scheduled run, a second replica, or
+  a run overrunning its window all skip rather than pile up.
+- **It records every run.** `job_runs` holds what happened and when:
+
+  ```sql
+  SELECT name, started_at, ok, detail FROM job_runs ORDER BY started_at DESC LIMIT 5;
+  ```
+
+  This is the monitoring. The container is asleep almost all the time, which no
+  HTTP probe can distinguish from broken — so "did last night work?" is a query,
+  not an archaeology exercise through logs that have rotated away. A row with a
+  `started_at` and no `finished_at` is what a crash mid-run looks like.
+
+Every job is idempotent: running it twice produces the same numbers as running
+it once.
+
+**If you would rather use host cron**, the same command works and the lock makes
+it safe to run alongside the container:
+
+```
+30 2 * * *  docker compose run --rm jobs bun dist/jobs/run.mjs nightly
+```
+
+**Migrations are not automatic.** A deploy that changes the schema needs
+`bun run db:migrate` run against production first. Doing it on boot would mean
+several instances racing the same migration, so it is deliberately a separate
+step — but it is a step, and forgetting it is how a deploy half-works.
 
 ### Configuration that matters in production
 
@@ -72,6 +112,7 @@ night is repaired by the next run or a manual backfill.
 | `TRUST_PROXY_HEADERS` | `false` | **Set to `true` only if something in front of this server overwrites `x-forwarded-for`.** Left off behind a proxy, every request looks like it comes from the proxy. Turned on without one, any client can evade per-address rate limits by changing a header. |
 | `DATABASE_POOL_MAX` | `10` | Sized for four cores. More connections is not more throughput — past about twice the core count, backends contend for the same CPUs. Requests queue at the pool by design. |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | `15000` | The ceiling for a query somebody is waiting on. Batch jobs raise it for their own transaction; this is not the knob for them. |
+| `JOBS_SCHEDULE_UTC` | `02:30` | When the nightly job runs. UTC, not local: the analytics rollup buckets by UTC calendar day, so a local-time schedule would drift against the boundaries it exists to compute. |
 
 ### Performance notes
 
@@ -228,7 +269,8 @@ greetings/
 - `bun run db:migrate:test`: Run migrations against the test database
 - `bun run db:seed`: Seed reference data and the bootstrap super admin
 - `bun run db:seed:demo`: Seed a sample dataset for a fresh environment (never in production)
-- `bun run jobs nightly`: Daily rollup, feed rescore and cleanup — schedule this
+- `bun run jobs schedule`: The long-lived scheduler (what the `jobs` container runs)
+- `bun run jobs nightly`: Rollup, feed rescore and cleanup, once
 - `bun run db:studio`: Open database studio UI
 - `bun run check`: Run Biome formatting and linting
 - `bun run docker:build`: Build the Docker Compose images
