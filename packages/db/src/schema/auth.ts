@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
 	boolean,
 	index,
@@ -25,19 +25,32 @@ export const userRoleEnum = pgEnum("user_role", [
 export const USER_ROLES = userRoleEnum.enumValues;
 export type UserRole = (typeof USER_ROLES)[number];
 
-export const user = pgTable("user", {
-	id: text("id").primaryKey(),
-	name: text("name").notNull(),
-	email: text("email").notNull().unique(),
-	emailVerified: boolean("email_verified").default(false).notNull(),
-	image: text("image"),
-	role: userRoleEnum("role").default("user").notNull(),
-	createdAt: timestamp("created_at").defaultNow().notNull(),
-	updatedAt: timestamp("updated_at")
-		.defaultNow()
-		.$onUpdate(() => /* @__PURE__ */ new Date())
-		.notNull(),
-});
+export const user = pgTable(
+	"user",
+	{
+		id: text("id").primaryKey(),
+		name: text("name").notNull(),
+		email: text("email").notNull().unique(),
+		emailVerified: boolean("email_verified").default(false).notNull(),
+		image: text("image"),
+		role: userRoleEnum("role").default("user").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+		updatedAt: timestamp("updated_at")
+			.defaultNow()
+			.$onUpdate(() => /* @__PURE__ */ new Date())
+			.notNull(),
+	},
+	(table) => [
+		// The admin user lookup matches with a leading wildcard, which the
+		// unique b-tree on email cannot serve. Trigram indexes can, and the
+		// alternative is a sequential scan of every account on the platform —
+		// the one table certain to be the largest.
+		index("user_name_trgm_idx").using("gin", sql`${table.name} gin_trgm_ops`),
+		index("user_email_trgm_idx").using("gin", sql`${table.email} gin_trgm_ops`),
+		// Backs "list every designer", which the super admin panel opens with.
+		index("user_role_idx").on(table.role),
+	],
+);
 
 export const session = pgTable(
 	"session",

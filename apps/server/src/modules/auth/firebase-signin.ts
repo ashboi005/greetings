@@ -211,7 +211,16 @@ async function consumePendingInvite(
 	const [invite] = await tx
 		.select({ id: roleInvites.id, role: roleInvites.role })
 		.from(roleInvites)
-		.where(and(isNull(roleInvites.consumedAt), or(...identifiers)))
+		.where(
+			and(
+				isNull(roleInvites.consumedAt),
+				// A withdrawn invite must not still grant on first sign-in. The
+				// row survives for the audit trail, which is exactly why this
+				// predicate has to be here as well as on the unique index.
+				isNull(roleInvites.revokedAt),
+				or(...identifiers),
+			),
+		)
 		.limit(1);
 
 	if (!invite) return;

@@ -8,6 +8,7 @@ import { Elysia } from "elysia";
 import { errorHandler } from "./lib/error-plugin";
 import { type ObjectStorage, requireObjectStorage } from "./lib/storage";
 import type { TokenVerifier } from "./lib/token-verifier";
+import { adminAuditRoutes } from "./modules/admin/audit";
 import { adminRoleRoutes } from "./modules/admin/roles";
 import { analyticsRoutes } from "./modules/analytics/routes";
 import { authRoutes } from "./modules/auth/routes";
@@ -127,6 +128,7 @@ export function createApp(options: AppOptions = {}) {
 			.use(authRoutes(options.tokenVerifier))
 			.use(profileRoutes())
 			.use(adminRoleRoutes())
+			.use(adminAuditRoutes())
 			.use(designerContentRoutes(getStorage))
 			.use(adminContentRoutes())
 			.use(feedRoutes())

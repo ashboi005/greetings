@@ -101,6 +101,10 @@ export const reports = pgTable(
 		// Drives the admin queue: open reports, worst first.
 		index("reports_status_created_idx").on(table.status, table.createdAt),
 		index("reports_content_idx").on(table.contentId, table.status),
+		// Every report submission counts this reporter's recent reports to
+		// enforce the hourly limit. Without this the check seq-scans the whole
+		// table, and it is the one query that runs on the way *in* to reporting.
+		index("reports_reporter_created_idx").on(table.reporterId, table.createdAt),
 	],
 );
 
@@ -162,6 +166,8 @@ export const moderationActions = pgTable(
 			table.createdAt,
 		),
 		index("moderation_actions_actor_idx").on(table.actorId),
+		// The platform-wide audit feed, newest first.
+		index("moderation_actions_created_idx").on(table.createdAt),
 	],
 );
 

@@ -93,39 +93,82 @@ export function adminRoleRoutes() {
 		)
 		.get(
 			"/roles/invites",
-			() =>
+			({ query }) =>
 				db
 					.select({
 						id: roleInvites.id,
 						email: roleInvites.email,
 						phone: roleInvites.phone,
 						role: roleInvites.role,
+						invitedBy: roleInvites.invitedBy,
 						createdAt: roleInvites.createdAt,
+						consumedAt: roleInvites.consumedAt,
+						consumedByUserId: roleInvites.consumedByUserId,
+						revokedAt: roleInvites.revokedAt,
+						revokedBy: roleInvites.revokedBy,
 					})
 					.from(roleInvites)
-					.where(isNull(roleInvites.consumedAt))
-					.orderBy(desc(roleInvites.createdAt)),
+					.where(
+						query.includeSettled
+							? undefined
+							: and(
+									isNull(roleInvites.consumedAt),
+									isNull(roleInvites.revokedAt),
+								),
+					)
+					.orderBy(desc(roleInvites.createdAt))
+					.limit(query.limit ?? 100),
 			{
 				requireRole: ["super_admin"],
-				detail: { tags: ["Admin"], summary: "Outstanding role invites" },
+				query: t.Object({
+					includeSettled: t.Optional(
+						t.Boolean({
+							description:
+								"Include invites already consumed or revoked — the audit view",
+						}),
+					),
+					limit: t.Optional(t.Integer({ minimum: 1, maximum: 200 })),
+				}),
+				detail: {
+					tags: ["Admin"],
+					summary: "Role invites, outstanding by default",
+				},
 			},
 		)
 		.delete(
 			"/roles/invites/:id",
-			async ({ params }) => {
-				const [deleted] = await db
-					.delete(roleInvites)
+			async ({ currentUser, params }) => {
+				const actor = requireUser(currentUser);
+
+				// Marked revoked, not deleted. A super admin offering someone admin
+				// and then withdrawing it is precisely the kind of thing an audit
+				// trail exists to preserve, and a DELETE that leaves no trace is a
+				// hole in it. The partial unique index ignores revoked rows, so the
+				// same address can be invited again straight away.
+				const [revoked] = await db
+					.update(roleInvites)
+					.set({ revokedAt: new Date(), revokedBy: actor.id })
 					.where(
-						and(eq(roleInvites.id, params.id), isNull(roleInvites.consumedAt)),
+						and(
+							eq(roleInvites.id, params.id),
+							isNull(roleInvites.consumedAt),
+							isNull(roleInvites.revokedAt),
+						),
 					)
 					.returning({ id: roleInvites.id });
 
-				if (!deleted) throw notFound("No outstanding invite with that id.");
+				if (!revoked) throw notFound("No outstanding invite with that id.");
 				return { ok: true as const };
 			},
 			{
 				requireRole: ["super_admin"],
-				detail: { tags: ["Admin"], summary: "Revoke an outstanding invite" },
+				detail: {
+					tags: ["Admin"],
+					summary: "Withdraw an outstanding invite",
+					description:
+						"The invite stops applying immediately but the record is kept. " +
+						"Pass `includeSettled` to GET /v1/admin/roles/invites to see it.",
+				},
 			},
 		);
 }

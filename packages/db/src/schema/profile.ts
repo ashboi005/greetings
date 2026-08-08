@@ -9,8 +9,14 @@ import {
 } from "drizzle-orm/pg-core";
 import { user, userRoleEnum } from "./auth";
 
-/** Partial-index predicate: only invites still awaiting a first sign-in. */
-const unconsumed = sql`consumed_at is null`;
+/**
+ * Partial-index predicate: only invites still awaiting a first sign-in.
+ *
+ * A revoked invite is spent as far as uniqueness goes — the identifier is free
+ * to be invited again — but the row survives, because a grant of privilege that
+ * was withdrawn is exactly the kind of thing an audit needs to show.
+ */
+const unconsumed = sql`consumed_at is null and revoked_at is null`;
 
 /**
  * Profile and reference data (spec §4.2).
@@ -82,6 +88,13 @@ export const roleInvites = pgTable(
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		consumedAt: timestamp("consumed_at"),
 		consumedByUserId: text("consumed_by_user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		// Withdrawn before anyone signed in with it. Soft rather than a delete:
+		// "a super admin offered someone admin and thought better of it" is a
+		// fact the audit should keep.
+		revokedAt: timestamp("revoked_at"),
+		revokedBy: text("revoked_by").references(() => user.id, {
 			onDelete: "set null",
 		}),
 	},

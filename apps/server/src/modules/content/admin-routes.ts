@@ -6,12 +6,19 @@ import {
 	moderationActions,
 	user as userTable,
 } from "@greetings/db/schema";
-import { asc, desc, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
 import { authGuard, requireUser } from "../auth/session";
 import { availableActions, transition } from "./lifecycle";
+
+/**
+ * The moderator behind an action, as distinct from the designer who made the
+ * content — both are rows in `user`, so the join needs two names.
+ */
+const actor = alias(userTable, "actor");
 
 /**
  * Admin review of submitted content (spec §5).
@@ -66,6 +73,73 @@ export function adminContentRoutes() {
 		)
 
 		.get(
+			"/content",
+			async ({ query }) => {
+				const term = query.q?.trim();
+
+				// Raw SQL rather than the builder: four independent optional
+				// filters assembled with `and(...)` reads far worse than the
+				// null-guard form, and this is the query an admin reaches for
+				// when they need to find one specific item among everything.
+				const rows = await db.execute(sql`
+					SELECT
+						c.id,
+						c.title,
+						c.status::text          AS status,
+						c.primary_language      AS "primaryLanguage",
+						c.region_code           AS "regionCode",
+						c.visibility_hold       AS "visibilityHold",
+						c.download_count        AS "downloadCount",
+						c.created_at            AS "createdAt",
+						c.submitted_at          AS "submittedAt",
+						c.published_at          AS "publishedAt",
+						c.designer_id           AS "designerId",
+						u.name                  AS "designerName",
+						(SELECT COUNT(*)::int FROM reports rp
+							WHERE rp.content_id = c.id AND rp.status = 'open')
+							AS "openReports"
+					FROM content c
+					JOIN "user" u ON u.id = c.designer_id
+					WHERE (${query.status ?? null}::text IS NULL
+					       OR c.status::text = ${query.status ?? null}::text)
+						AND (${query.designerId ?? null}::text IS NULL
+						     OR c.designer_id = ${query.designerId ?? null}::text)
+						AND (${term ?? null}::text IS NULL
+						     OR c.id = ${term ?? ""}
+						     OR c.title ILIKE ${`%${term ?? ""}%`})
+					ORDER BY c.created_at DESC
+					LIMIT ${query.limit ?? 50}
+				`);
+
+				return rows.rows;
+			},
+			{
+				requireRole: ["admin", "super_admin"],
+				query: t.Object({
+					q: t.Optional(
+						t.String({
+							maxLength: 200,
+							description: "Match a title, or paste an exact content id",
+						}),
+					),
+					status: optionalEnum(CONTENT_STATUSES, {
+						description: "Filter to one status; omit for every status",
+					}),
+					designerId: t.Optional(t.String()),
+					limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
+				}),
+				detail: {
+					tags: ["Admin"],
+					summary: "Search all content, in any status",
+					description:
+						"The way in to a specific item: search by title or paste an id, " +
+						"then open its audit trail. Unlike the review queue this spans " +
+						"every status, including removed and draft.",
+				},
+			},
+		)
+
+		.get(
 			"/content/:id",
 			async ({ params }) => {
 				const [row] = await db
@@ -102,14 +176,21 @@ export function adminContentRoutes() {
 					.from(contentAssets)
 					.where(eq(contentAssets.contentId, params.id));
 
+				// Resolved to names, not left as ids: a review screen showing
+				// "rejected by 6f2a…" tells the next admin nothing. Identity is
+				// looked up rather than stored on the row, so a display-name
+				// change does not retroactively rewrite the log.
 				const history = await db
 					.select({
 						action: moderationActions.action,
 						reason: moderationActions.reason,
 						actorId: moderationActions.actorId,
+						actorName: actor.name,
+						actorRole: actor.role,
 						createdAt: moderationActions.createdAt,
 					})
 					.from(moderationActions)
+					.leftJoin(actor, eq(actor.id, moderationActions.actorId))
 					.where(eq(moderationActions.contentId, params.id))
 					.orderBy(desc(moderationActions.createdAt));
 

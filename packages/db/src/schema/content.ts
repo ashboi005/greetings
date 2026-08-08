@@ -109,6 +109,13 @@ export const content = pgTable(
 		index("content_designer_idx").on(table.designerId, table.createdAt),
 		// The admin review queue, oldest first so nothing is starved.
 		index("content_review_queue_idx").on(table.status, table.submittedAt),
+		// The nightly orphan sweep looks for drafts untouched for a week. Partial
+		// so it stays tiny: drafts are a small and short-lived minority of rows.
+		index("content_stale_draft_idx")
+			.on(table.updatedAt)
+			.where(sql`status = 'draft'`),
+		// The admin browse and audit lookup, newest first across every status.
+		index("content_created_at_idx").on(table.createdAt),
 		index("content_language_idx").on(table.primaryLanguage),
 		index("content_region_idx").on(table.regionCode),
 		index("content_title_tsv_idx").using("gin", table.titleTsv),
