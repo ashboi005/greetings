@@ -113,6 +113,41 @@ bun run dev
 Web on [http://localhost:3001](http://localhost:3001), API on
 [http://localhost:3000](http://localhost:3000), mobile through Expo Go.
 
+## The web panels
+
+Three panels, one app, gated by role. Sign-in is Google only — the server has
+email and password switched off, because the product has no password flow and
+leaving one enabled would be a second, weaker route into an admin account.
+
+| Route | Who | What |
+|---|---|---|
+| `/designer` | designer | Own content and its review state; create, upload, tag, submit, discard |
+| `/designer/analytics` | designer | Own downloads, by day, by post, by state |
+| `/moderation` | admin, super admin | Review queue, oldest first; approve, request changes, take down, restore |
+| `/moderation/reports` | admin, super admin | Open reports grouped by item, most-reported first |
+| `/admin` | super admin | Platform totals, downloads per day, designers by reach |
+| `/admin/content` | super admin | Search every item in every status |
+| `/admin/content/[id]` | super admin | One item's whole history, every actor named |
+| `/admin/people` | super admin | Grant roles, withdraw invites, find anyone |
+| `/admin/audit` | super admin | Every moderation decision and every role change |
+
+A super admin sees the moderation screens too — the product asks for one person
+who can do everything, and making them switch accounts to approve a post would
+be absurd.
+
+The navigation is role-aware, but that is a courtesy, not a control: every
+endpoint enforces its own role server-side, and hiding a link the API would
+refuse anyway is not security.
+
+**Designers work on phones.** The panel is built for that: stacked rows rather
+than tables, and the upload goes straight from the browser to object storage
+without passing through the API, so a slow connection is not made slower by an
+extra hop.
+
+**Without R2 credentials** the panels still work — previews come back null and
+the image slot says so, rather than the whole review screen failing over a
+thumbnail.
+
 ## UI Customization
 
 React web apps in this stack share shadcn/ui primitives through `packages/ui`.

@@ -11,7 +11,11 @@ import { alias } from "drizzle-orm/pg-core";
 import { Elysia, t } from "elysia";
 import { notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
-import { type ObjectStorage, withPreviews } from "../../lib/storage";
+import {
+	type ObjectStorage,
+	optionalObjectStorage,
+	withPreviews,
+} from "../../lib/storage";
 import { authGuard, requireUser } from "../auth/session";
 import { availableActions, transition } from "./lifecycle";
 
@@ -200,7 +204,7 @@ export function adminContentRoutes(storage: () => ObjectStorage) {
 					// Reviewers need to see the image. A signed preview rather than
 					// the download endpoint, so assessing content never counts as
 					// consuming it.
-					assets: withPreviews(assets, storage()),
+					assets: withPreviews(assets, optionalObjectStorage(storage)),
 					history,
 					availableActions: availableActions(row.status),
 				};

@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-	title: "greetings",
-	description: "greetings",
+	title: "Greetings — panels",
+	description: "Designer and administrator panels for Greetings.",
 };
 
 export default function RootLayout({

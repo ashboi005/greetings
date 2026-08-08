@@ -14,6 +14,7 @@ import { badRequest, conflict, notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
 import {
 	type ObjectStorage,
+	optionalObjectStorage,
 	purgeContentObjects,
 	withPreviews,
 } from "../../lib/storage";
@@ -199,8 +200,12 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 
 				// After the row is gone, not before: a failure here leaves objects
 				// for the nightly sweep, whereas failing first would leave a row the
-				// designer has already been told is deleted.
-				const purged = await purgeContentObjects(storage(), params.id);
+				// designer has already been told is deleted. Same reason the missing
+				// -storage case is tolerated: the delete has already happened.
+				const objectStorage = optionalObjectStorage(storage);
+				const purged = objectStorage
+					? await purgeContentObjects(objectStorage, params.id)
+					: { deleted: 0 };
 
 				return { ok: true as const, objectsDeleted: purged.deleted };
 			},
@@ -363,10 +368,7 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 					.select()
 					.from(content)
 					.where(
-						and(
-							eq(content.id, params.id),
-							eq(content.designerId, designer.id),
-						),
+						and(eq(content.id, params.id), eq(content.designerId, designer.id)),
 					)
 					.limit(1);
 
@@ -394,7 +396,7 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 				return {
 					...row,
 					tags: applied,
-					assets: withPreviews(assets, storage()),
+					assets: withPreviews(assets, optionalObjectStorage(storage)),
 				};
 			},
 			{

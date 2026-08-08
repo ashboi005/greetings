@@ -139,15 +139,39 @@ export const PREVIEW_URL_TTL_SECONDS = 5 * 60;
  */
 export function withPreviews<T extends { storageKey: string }>(
 	assets: T[],
-	storage: ObjectStorage,
-): (T & { previewUrl: string })[] {
+	storage: ObjectStorage | null,
+): (T & { previewUrl: string | null })[] {
 	return assets.map((asset) => ({
 		...asset,
-		previewUrl: storage.presignDownload({
-			key: asset.storageKey,
-			expiresInSeconds: PREVIEW_URL_TTL_SECONDS,
-		}),
+		// Null when this deployment has no storage credentials. The alternative
+		// — letting the missing configuration throw — would take a whole review
+		// screen down over an image, when everything else on it (the title, the
+		// history, the decision buttons) works perfectly well without one.
+		previewUrl: storage
+			? storage.presignDownload({
+					key: asset.storageKey,
+					expiresInSeconds: PREVIEW_URL_TTL_SECONDS,
+				})
+			: null,
 	}));
+}
+
+/**
+ * Storage if this deployment has it, null if not.
+ *
+ * The counterpart to `requireObjectStorage`, for the callers that can carry on
+ * without it. Which of the two a route uses is a real decision: an upload that
+ * silently does nothing is worse than an error, and a review screen that
+ * refuses to open because of a missing thumbnail is worse than a gap.
+ */
+export function optionalObjectStorage(
+	resolve: () => ObjectStorage,
+): ObjectStorage | null {
+	try {
+		return resolve();
+	} catch {
+		return null;
+	}
 }
 
 /** The prefix every object for one piece of content lives under. */

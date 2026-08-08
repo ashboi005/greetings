@@ -2,6 +2,7 @@
 
 import { Toaster } from "@greetings/ui/components/sonner";
 
+import { SessionProvider } from "@/lib/session";
 import { ThemeProvider } from "./theme-provider";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
@@ -12,7 +13,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 			enableSystem
 			disableTransitionOnChange
 		>
-			{children}
+			<SessionProvider>{children}</SessionProvider>
 			<Toaster richColors />
 		</ThemeProvider>
 	);
