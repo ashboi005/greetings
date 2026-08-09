@@ -30,6 +30,22 @@ const DAY = 24 * 60 * 60 * 1000;
 const today = () => toStatDate(new Date());
 const daysAgo = (n: number) => toStatDate(new Date(Date.now() - n * DAY));
 
+/**
+ * Midday UTC, `n` days back.
+ *
+ * These tests arrange events on a particular calendar day and then assert the
+ * rollup for that day. Offsetting from `Date.now()` puts the timestamp an
+ * arbitrary number of hours into the day, which is fine until the suite runs
+ * near a boundary — `now - 24h + 1h` lands on *today* when the clock reads 23:xx
+ * UTC, and eight tests fail for one hour in twenty-four. Anchoring to midday
+ * makes the day the test means the day it gets, whenever it runs.
+ */
+function middayUtc(daysBack: number): Date {
+	const day = new Date(Date.now() - daysBack * DAY);
+	day.setUTCHours(12, 0, 0, 0);
+	return day;
+}
+
 let designerId: string;
 let designerToken: string;
 let adminToken: string;
@@ -86,7 +102,7 @@ async function events(
 			userId: row.userId,
 			regionCode: row.region,
 			source: "feed" as const,
-			createdAt: new Date(Date.now() - row.daysAgo * DAY + 3600_000),
+			createdAt: middayUtc(row.daysAgo),
 		})),
 	);
 }

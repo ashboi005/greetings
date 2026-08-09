@@ -1,13 +1,11 @@
 import { db } from "@greetings/db";
 import {
 	CONTENT_STATUSES,
+	type ContentStatus,
 	content,
-	contentAssets,
-	moderationActions,
 	user as userTable,
 } from "@greetings/db/schema";
-import { asc, desc, eq, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
+import { asc, eq, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
@@ -18,12 +16,6 @@ import {
 } from "../../lib/storage";
 import { authGuard, requireUser } from "../auth/session";
 import { availableActions, transition } from "./lifecycle";
-
-/**
- * The moderator behind an action, as distinct from the designer who made the
- * content — both are rows in `user`, so the join needs two names.
- */
-const actor = alias(userTable, "actor");
 
 /**
  * Admin review of submitted content (spec §5).
@@ -100,11 +92,19 @@ export function adminContentRoutes(storage: () => ObjectStorage) {
 						c.published_at          AS "publishedAt",
 						c.designer_id           AS "designerId",
 						u.name                  AS "designerName",
-						(SELECT COUNT(*)::int FROM reports rp
-							WHERE rp.content_id = c.id AND rp.status = 'open')
-							AS "openReports"
+						COALESCE(r.open_reports, 0) AS "openReports"
 					FROM content c
 					JOIN "user" u ON u.id = c.designer_id
+					-- A grouped join rather than a correlated subquery per row. At
+					-- a hundred rows that was a hundred index probes for a number
+					-- that is almost always zero; this is one pass over the open
+					-- reports, of which there are few by definition.
+					LEFT JOIN (
+						SELECT content_id, COUNT(*)::int AS open_reports
+						FROM reports
+						WHERE status = 'open'
+						GROUP BY content_id
+					) r ON r.content_id = c.id
 					WHERE (${query.status ?? null}::text IS NULL
 					       OR c.status::text = ${query.status ?? null}::text)
 						AND (${query.designerId ?? null}::text IS NULL
@@ -147,65 +147,73 @@ export function adminContentRoutes(storage: () => ObjectStorage) {
 		.get(
 			"/content/:id",
 			async ({ params }) => {
-				const [row] = await db
-					.select({
-						id: content.id,
-						title: content.title,
-						description: content.description,
-						status: content.status,
-						primaryLanguage: content.primaryLanguage,
-						regionCode: content.regionCode,
-						visibilityHold: content.visibilityHold,
-						rejectionReason: content.rejectionReason,
-						submittedAt: content.submittedAt,
-						publishedAt: content.publishedAt,
-						designerId: content.designerId,
-						designerName: userTable.name,
-					})
-					.from(content)
-					.innerJoin(userTable, eq(userTable.id, content.designerId))
-					.where(eq(content.id, params.id))
-					.limit(1);
+				// One query for the review screen. It used to be three — the item,
+				// then its images, then its history — which is the shape that turns
+				// into a waterfall as soon as anything lists them.
+				const result = await db.execute(sql`
+					SELECT
+						c.id,
+						c.title,
+						c.description,
+						c.status::text       AS status,
+						c.primary_language   AS "primaryLanguage",
+						c.region_code        AS "regionCode",
+						c.visibility_hold    AS "visibilityHold",
+						c.rejection_reason   AS "rejectionReason",
+						c.submitted_at       AS "submittedAt",
+						c.published_at       AS "publishedAt",
+						c.designer_id        AS "designerId",
+						u.name               AS "designerName",
+						COALESCE(a.assets, '[]'::json)  AS assets,
+						COALESCE(h.history, '[]'::json) AS history
+					FROM content c
+					JOIN "user" u ON u.id = c.designer_id
+					LEFT JOIN LATERAL (
+						SELECT json_agg(json_build_object(
+							'id', ca.id,
+							'storageKey', ca.storage_key,
+							'mimeType', ca.mime_type,
+							'width', ca.width,
+							'height', ca.height,
+							'bytes', ca.bytes
+						) ORDER BY ca.created_at) AS assets
+						FROM content_assets ca WHERE ca.content_id = c.id
+					) a ON TRUE
+					LEFT JOIN LATERAL (
+						-- Actor names resolved here, not left as ids: a review screen
+						-- showing "rejected by 6f2a…" tells the next admin nothing.
+						-- Looked up rather than stored, so a display-name change never
+						-- retroactively rewrites the log.
+						SELECT json_agg(json_build_object(
+							'action', ma.action::text,
+							'reason', ma.reason,
+							'actorId', ma.actor_id,
+							'actorName', actor.name,
+							'actorRole', actor.role::text,
+							'createdAt', ma.created_at
+						) ORDER BY ma.created_at DESC) AS history
+						FROM moderation_actions ma
+						LEFT JOIN "user" actor ON actor.id = ma.actor_id
+						WHERE ma.content_id = c.id
+					) h ON TRUE
+					WHERE c.id = ${params.id}
+				`);
+
+				const row = result.rows[0] as
+					| (Record<string, unknown> & {
+							status: ContentStatus;
+							assets: { storageKey: string }[];
+					  })
+					| undefined;
 
 				if (!row) throw notFound("No such content.");
-
-				const assets = await db
-					.select({
-						id: contentAssets.id,
-						storageKey: contentAssets.storageKey,
-						mimeType: contentAssets.mimeType,
-						width: contentAssets.width,
-						height: contentAssets.height,
-						bytes: contentAssets.bytes,
-					})
-					.from(contentAssets)
-					.where(eq(contentAssets.contentId, params.id));
-
-				// Resolved to names, not left as ids: a review screen showing
-				// "rejected by 6f2a…" tells the next admin nothing. Identity is
-				// looked up rather than stored on the row, so a display-name
-				// change does not retroactively rewrite the log.
-				const history = await db
-					.select({
-						action: moderationActions.action,
-						reason: moderationActions.reason,
-						actorId: moderationActions.actorId,
-						actorName: actor.name,
-						actorRole: actor.role,
-						createdAt: moderationActions.createdAt,
-					})
-					.from(moderationActions)
-					.leftJoin(actor, eq(actor.id, moderationActions.actorId))
-					.where(eq(moderationActions.contentId, params.id))
-					.orderBy(desc(moderationActions.createdAt));
 
 				return {
 					...row,
 					// Reviewers need to see the image. A signed preview rather than
 					// the download endpoint, so assessing content never counts as
 					// consuming it.
-					assets: withPreviews(assets, optionalObjectStorage(storage)),
-					history,
+					assets: withPreviews(row.assets, optionalObjectStorage(storage)),
 					availableActions: availableActions(row.status),
 				};
 			},

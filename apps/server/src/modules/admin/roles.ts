@@ -16,6 +16,7 @@ import {
 	isUniqueViolation,
 	notFound,
 } from "../../lib/errors";
+import { invalidateUser } from "../../lib/session-cache";
 import { authGuard, requireUser } from "../auth/session";
 
 /**
@@ -254,4 +255,8 @@ async function applyRoleChange(
 		// expired, which is the whole point of demoting someone.
 		await tx.delete(session).where(eq(session.userId, target.id));
 	});
+
+	// The rows are gone, but a cached authorisation would outlive them for its
+	// TTL — which on a demotion is exactly the window that must not exist.
+	invalidateUser(target.id);
 }

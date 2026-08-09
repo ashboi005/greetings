@@ -4,11 +4,9 @@ import {
 	content,
 	contentAssets,
 	contentTags,
-	languages,
-	regions,
 	tags,
 } from "@greetings/db/schema";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { badRequest, conflict, notFound } from "../../lib/errors";
 import { optionalEnum } from "../../lib/schema";
@@ -19,6 +17,7 @@ import {
 	withPreviews,
 } from "../../lib/storage";
 import { authGuard, requireUser } from "../auth/session";
+import { knownLanguageCodes, knownRegionCodes } from "../profile/routes";
 import { transition } from "./lifecycle";
 
 /**
@@ -387,56 +386,62 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 			async ({ currentUser, params }) => {
 				const designer = requireUser(currentUser);
 
-				const [row] = await db
-					// Named columns, not `select()`. The whole row carries the
-					// generated search vector and the feed's ranking internals —
-					// none of which a client has any use for, and the tsvector grows
-					// with the description.
-					.select({
-						id: content.id,
-						title: content.title,
-						description: content.description,
-						status: content.status,
-						primaryLanguage: content.primaryLanguage,
-						regionCode: content.regionCode,
-						downloadCount: content.downloadCount,
-						visibilityHold: content.visibilityHold,
-						rejectionReason: content.rejectionReason,
-						submittedAt: content.submittedAt,
-						publishedAt: content.publishedAt,
-						createdAt: content.createdAt,
-					})
-					.from(content)
-					.where(
-						and(eq(content.id, params.id), eq(content.designerId, designer.id)),
-					)
-					.limit(1);
+				// One query for a screen, not three. Assets and tags are aggregated
+				// into JSON in the database rather than fetched in follow-up round
+				// trips — the shape that reads fine for one item and becomes a
+				// waterfall the moment anything lists them.
+				//
+				// Named columns rather than the whole row: it carries the generated
+				// search vector and the feed's ranking internals, which no client
+				// has any use for and which grow with the description.
+				const result = await db.execute(sql`
+					SELECT
+						c.id,
+						c.title,
+						c.description,
+						c.status::text        AS status,
+						c.primary_language    AS "primaryLanguage",
+						c.region_code         AS "regionCode",
+						c.download_count      AS "downloadCount",
+						c.visibility_hold     AS "visibilityHold",
+						c.rejection_reason    AS "rejectionReason",
+						c.submitted_at        AS "submittedAt",
+						c.published_at        AS "publishedAt",
+						c.created_at          AS "createdAt",
+						COALESCE(a.assets, '[]'::json) AS assets,
+						COALESCE(t.tags, '[]'::json)   AS tags
+					FROM content c
+					LEFT JOIN LATERAL (
+						SELECT json_agg(json_build_object(
+							'id', ca.id,
+							'storageKey', ca.storage_key,
+							'mimeType', ca.mime_type,
+							'width', ca.width,
+							'height', ca.height,
+							'bytes', ca.bytes
+						) ORDER BY ca.created_at) AS assets
+						FROM content_assets ca WHERE ca.content_id = c.id
+					) a ON TRUE
+					LEFT JOIN LATERAL (
+						SELECT json_agg(json_build_object(
+							'id', tg.id, 'slug', tg.slug, 'label', tg.label
+						) ORDER BY tg.label) AS tags
+						FROM content_tags ct
+						JOIN tags tg ON tg.id = ct.tag_id
+						WHERE ct.content_id = c.id
+					) t ON TRUE
+					WHERE c.id = ${params.id} AND c.designer_id = ${designer.id}
+				`);
+
+				const row = result.rows[0] as
+					| (Record<string, unknown> & { assets: { storageKey: string }[] })
+					| undefined;
 
 				if (!row) throw notFound("No such content.");
 
-				const assets = await db
-					.select({
-						id: contentAssets.id,
-						storageKey: contentAssets.storageKey,
-						mimeType: contentAssets.mimeType,
-						width: contentAssets.width,
-						height: contentAssets.height,
-						bytes: contentAssets.bytes,
-					})
-					.from(contentAssets)
-					.where(eq(contentAssets.contentId, params.id))
-					.orderBy(contentAssets.createdAt);
-
-				const applied = await db
-					.select({ id: tags.id, slug: tags.slug, label: tags.label })
-					.from(contentTags)
-					.innerJoin(tags, eq(tags.id, contentTags.tagId))
-					.where(eq(contentTags.contentId, params.id));
-
 				return {
 					...row,
-					tags: applied,
-					assets: withPreviews(assets, optionalObjectStorage(storage)),
+					assets: withPreviews(row.assets, optionalObjectStorage(storage)),
 				};
 			},
 			{
@@ -612,20 +617,21 @@ async function assertSubmittable(contentId: string, designerId: string) {
 	if (!tag) throw badRequest("At least one tag is required before review.");
 }
 
+/**
+ * Reference checks, served from the cache the reference endpoints already fill.
+ *
+ * These were a query each on the way in to creating or editing content. They
+ * are two lists of a few dozen rows that change when someone runs a seed
+ * script; holding them removes two round trips from every write.
+ */
 async function assertLanguageExists(code: string) {
-	const [row] = await db
-		.select({ code: languages.code })
-		.from(languages)
-		.where(eq(languages.code, code))
-		.limit(1);
-	if (!row) throw badRequest(`Unknown language: ${code}`);
+	if (!(await knownLanguageCodes()).has(code)) {
+		throw badRequest(`Unknown language: ${code}`);
+	}
 }
 
 async function assertRegionExists(code: string) {
-	const [row] = await db
-		.select({ code: regions.code })
-		.from(regions)
-		.where(eq(regions.code, code))
-		.limit(1);
-	if (!row) throw badRequest(`Unknown region: ${code}`);
+	if (!(await knownRegionCodes()).has(code)) {
+		throw badRequest(`Unknown region: ${code}`);
+	}
 }

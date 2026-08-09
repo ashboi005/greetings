@@ -10,6 +10,11 @@ import { auth } from "@greetings/auth";
 import { USER_ROLES, type UserRole } from "@greetings/db/schema";
 import { Elysia } from "elysia";
 import { forbidden, unauthenticated } from "../../lib/errors";
+import {
+	bearerToken,
+	readCachedSession,
+	writeCachedSession,
+} from "../../lib/session-cache";
 
 export interface CurrentUser {
 	id: string;
@@ -57,10 +62,48 @@ export function getSessionOnce(request: Request): Promise<BetterAuthSession> {
 	return pending;
 }
 
+/**
+ * The caller, resolved from a short-lived cache where possible.
+ *
+ * Only the *authorisation* answer is cached — who this is and what role they
+ * hold — not the Better Auth session object, which other code may want in full.
+ * That keeps the cached value small and makes it obvious what staleness is
+ * being accepted: see lib/session-cache.ts.
+ *
+ * Cookie-borne sessions skip the cache entirely. Better Auth already serves
+ * those from a signed cookie without touching the database, so caching them
+ * again would add staleness and save nothing.
+ */
 export async function resolveCurrentUserOnce(
 	request: Request,
 ): Promise<CurrentUser | null> {
-	return toCurrentUser(await getSessionOnce(request));
+	const token = bearerToken(request.headers);
+	if (!token) return toCurrentUser(await getSessionOnce(request));
+
+	const hit = readCachedSession(token);
+	if (hit !== undefined) {
+		return hit
+			? { id: hit.userId, email: hit.email, name: hit.name, role: hit.role }
+			: null;
+	}
+
+	const session = await getSessionOnce(request);
+	const user = toCurrentUser(session);
+
+	writeCachedSession(
+		token,
+		user && session
+			? {
+					userId: user.id,
+					email: user.email,
+					name: user.name,
+					role: user.role,
+					expiresAt: new Date(session.session.expiresAt).getTime(),
+				}
+			: null,
+	);
+
+	return user;
 }
 
 export async function resolveCurrentUser(

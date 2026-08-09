@@ -8,6 +8,7 @@
 		"compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
 		"dev": "bun run --hot src/index.ts",
 		"test": "bun test",
+		"bench": "bun run test/bench.ts",
 		"jobs": "bun run src/jobs/run.ts",
 		"start": "bun run dist/index.mjs"
 	},

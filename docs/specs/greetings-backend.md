@@ -445,6 +445,87 @@ the signed cookie carries the session and role.
 
 ---
 
+### 12.6 Round trips, and what was done about them
+
+Measured rather than assumed: `bun run bench` counts the statements each
+endpoint issues, warm. It exists because "is this fast" is not a judgement to
+make by reading code — an N+1 shows up there as a number that climbs with the
+data, and a forgotten round trip as a 2 where a 1 would do.
+
+The pass took the whole surface from **77.5 statements to 20**, with no endpoint
+above 2:
+
+| | before | after |
+|---|---|---|
+| `GET /v1/feed` | 4 | **2** |
+| `GET /v1/auth/me` | 2 | **0** |
+| `GET /v1/regions`, `/languages`, `/tags` | 3 each | **0** |
+| `PUT /v1/me/profile` | 6.5 | **1** |
+| `POST /v1/content/:id/download` | 6 | **2** |
+| `GET /v1/designer/content/:id` | 5 | **1** |
+| `GET /v1/admin/content/:id` | 5 | **1** |
+| every other endpoint | 3–4 | **1** |
+| **total across 21 endpoints** | **77.5** | **20** |
+
+Four changes account for it.
+
+**A short-lived session cache** (lib/session-cache.ts). Every authenticated
+request paid two statements — the session row, then the user row — before doing
+any of its own work; across the API that was more than half of all round trips.
+Web requests already avoid it through Better Auth's signed cookie cache, but
+mobile clients send a bearer token and have no cookie jar, and mobile is the
+entire end-user population. Bearer tokens are now cached for **thirty seconds**,
+against the cookie cache's five minutes. Sign-out, role changes and a session's
+own expiry all invalidate immediately rather than waiting for the TTL, so what
+the window really covers is the multi-process case, where an invalidation in one
+instance is invisible to another.
+
+**Reference data cached in process** (lib/reference-cache.ts), with
+`Cache-Control` so clients can skip the request entirely. Regions, languages and
+tags are 36, 23 and 38 rows that change when someone runs a seed script; every
+app launch asked for all three. In-flight loads are shared, so a cold cache
+under load does not turn one slow moment into a hundred concurrent queries.
+
+**Multi-statement writes folded into single statements.** Onboarding was a
+region check, a language check, `BEGIN`, an upsert, a delete, an insert and
+`COMMIT`. A data-modifying CTE runs in one implicit transaction, so it is
+exactly as atomic and costs one round trip. The download path went the same way,
+and reads its region inside the insert rather than fetching it first.
+
+**Correlated subqueries replaced with grouped joins.** The admin content and
+user lists ran one or two subqueries *per row*; at a hundred-row page that was
+two hundred index probes for numbers that are usually zero.
+
+Two things deliberately not folded: the feed keeps its preference lookup
+separate, because pushing the viewer's languages into a subquery would cost the
+per-language index seek the whole ranking design depends on; and the audit
+timeline keeps its two queries, because the item and its history are different
+enough shapes that merging them would trade clarity for nothing.
+
+**Response compression** (lib/compression.ts). The audience is on Indian mobile
+networks where bytes and round trips cost far more than the CPU to shrink them.
+A tag list goes from 3,187 bytes to 687 — 78% — and bodies under a kilobyte are
+left alone, because below that the gzip header and the CPU cost more than the
+saving.
+
+### 12.7 Measured under load
+
+A concurrency sweep against `/v1/feed`, on one laptop with Postgres in Docker:
+
+| concurrency | rps | p50 | p95 | p99 | success |
+|---|---|---|---|---|---|
+| 1 | 177 | 5.2 ms | 8.3 ms | 12.3 ms | 100% |
+| 8 | 911 | 8.4 ms | 12.3 ms | 16.7 ms | 100% |
+| 32 | 1,154 | 26.9 ms | 37.9 ms | 48.3 ms | 100% |
+| 128 | 1,057 | 119.6 ms | 151.7 ms | 225.3 ms | 100% |
+| 512 | 1,203 | 441.5 ms | 605.4 ms | 719.5 ms | 100% |
+
+The shape is the point. Throughput flattens at about 1,200 requests a second and
+stays there; past saturation latency grows roughly linearly with concurrency,
+which is queueing. Nothing fails — no timeouts, no exhausted pool, no dropped
+connections — at sixteen times the useful concurrency. That is the behaviour
+§12.2 was aiming for, now observed rather than intended.
+
 ### 12.5 Scheduled work
 
 One job runs daily: `rollup`, then `scores`, then `cleanup`, in that order —

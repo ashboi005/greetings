@@ -32,6 +32,7 @@
 		"dev:web": "bun run --filter web dev",
 		"dev:server": "bun run --filter server dev",
 		"test": "bun run --filter server test",
+		"bench": "bun run --filter server bench",
 		"db:up": "docker compose -f docker-compose.dev.yml up -d --wait",
 		"db:down": "docker compose -f docker-compose.dev.yml down",
 		"db:reset": "docker compose -f docker-compose.dev.yml down -v && bun run db:up",

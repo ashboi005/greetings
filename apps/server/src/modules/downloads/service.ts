@@ -12,9 +12,7 @@ import { bumpedBaseScore } from "@greetings/db/feed-score";
 import {
 	content,
 	type DownloadSource,
-	downloadEvents,
 	downloadIdempotency,
-	userProfiles,
 } from "@greetings/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { conflict, notFound } from "../../lib/errors";
@@ -98,44 +96,45 @@ export async function recordDownload(input: {
 		}
 	}
 
-	// Region comes from the profile, frozen onto the event, so analytics stay
-	// correct if the user later moves.
-	const [profile] = await db
-		.select({ regionCode: userProfiles.regionCode })
-		.from(userProfiles)
-		.where(eq(userProfiles.userId, input.userId))
-		.limit(1);
-
-	await db.transaction(async (tx) => {
-		await tx.insert(downloadEvents).values({
-			contentId: input.contentId,
-			designerId: item.designerId,
-			userId: input.userId,
-			regionCode: profile?.regionCode ?? null,
-			// The language of what was downloaded, not of the user — a user may
-			// prefer several, and the useful question is which content travels.
-			languageCode: item.primaryLanguage,
-			source: input.source,
-		});
-
-		// Incremented in SQL rather than read-modify-write, so concurrent
-		// downloads cannot lose an increment.
-		//
-		// The feed's ranking score is bumped in the same statement. It could
-		// have been left to the nightly refresh — the popularity term is stored
-		// precisely so the feed does not count events per request — but that
-		// would mean a post taking off this morning was not ranked as popular
-		// until tomorrow. Folding it in here costs nothing extra: it is the same
-		// single-row update, and the nightly pass still corrects for downloads
-		// ageing out of the window, which an increment alone can never do.
-		await tx.execute(sql`
-			UPDATE content SET
-				download_count = download_count + 1,
-				recent_downloads = recent_downloads + 1,
-				base_score = ${bumpedBaseScore}
-			WHERE id = ${input.contentId}
-		`);
-	});
+	// The event and the counters, in one statement.
+	//
+	// This was a profile lookup, then BEGIN, an insert, an update and COMMIT —
+	// five round trips on the single most frequent write in the product. A
+	// data-modifying CTE runs in one implicit transaction, so it is exactly as
+	// atomic and costs one.
+	//
+	// The region is read inside the insert rather than fetched first. It is
+	// frozen onto the event on purpose, so analytics stay correct when someone
+	// later moves house; the LEFT JOIN keeps that true for a user who has not
+	// onboarded, whose region is simply null.
+	//
+	// The counter is incremented in SQL rather than read-modify-write, so
+	// concurrent downloads cannot lose one. The ranking score is bumped in the
+	// same update: it could have been left to the nightly pass, but that would
+	// mean a post taking off this morning is not ranked as popular until
+	// tomorrow, and folding it in costs nothing — it is the same single row.
+	await db.execute(sql`
+		WITH recorded AS (
+			INSERT INTO download_events
+				(content_id, designer_id, user_id, region_code, language_code, source)
+			SELECT
+				${input.contentId},
+				${item.designerId},
+				${input.userId},
+				p.region_code,
+				-- The language of what was downloaded, not of the user: a user may
+				-- prefer several, and the useful question is which content travels.
+				${item.primaryLanguage},
+				${input.source}::download_source
+			FROM (SELECT ${input.userId}::text AS uid) me
+			LEFT JOIN user_profiles p ON p.user_id = me.uid
+		)
+		UPDATE content SET
+			download_count   = download_count + 1,
+			recent_downloads = recent_downloads + 1,
+			base_score       = ${bumpedBaseScore}
+		WHERE id = ${input.contentId}
+	`);
 
 	return { url, expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS, recorded: true };
 }

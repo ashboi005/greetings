@@ -11,6 +11,8 @@
 import * as schema from "@greetings/db/schema";
 import { sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { clearReferenceCache } from "../src/lib/reference-cache";
+import { invalidateAll } from "../src/lib/session-cache";
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -55,4 +57,10 @@ export async function truncateAll(): Promise<void> {
 	await testDb.execute(
 		sql.raw(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE`),
 	);
+
+	// Caches derived from the database have to go with it. Reference data is
+	// held for a minute in normal operation; a test that wipes the tables and
+	// re-seeds different rows would otherwise read the previous test's.
+	clearReferenceCache();
+	invalidateAll();
 }

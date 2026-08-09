@@ -5,7 +5,9 @@ import { db } from "@greetings/db";
 import { env } from "@greetings/env/server";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
+import { compression } from "./lib/compression";
 import { errorHandler } from "./lib/error-plugin";
+import { invalidateAll } from "./lib/session-cache";
 import { type ObjectStorage, requireObjectStorage } from "./lib/storage";
 import type { TokenVerifier } from "./lib/token-verifier";
 import { adminAuditRoutes } from "./modules/admin/audit";
@@ -56,6 +58,8 @@ export function createApp(options: AppOptions = {}) {
 	return (
 		new Elysia()
 			.use(errorHandler)
+			// Before the routes, so every response passes through it.
+			.use(compression)
 			.use(
 				cors({
 					origin: env.CORS_ORIGIN,
@@ -91,7 +95,16 @@ export function createApp(options: AppOptions = {}) {
 			)
 			.all("/api/auth/*", async ({ request, status }) => {
 				if (["POST", "GET"].includes(request.method)) {
-					return auth.handler(request);
+					const response = await auth.handler(request);
+
+					// Sign-out, session revocation and account linking all happen
+					// inside this handler and all can invalidate a cached session.
+					// Rather than guess which route did what, any successful write
+					// drops the cache: auth writes are rare next to reads, and
+					// clearing a few thousand entries costs microseconds.
+					if (request.method === "POST" && response.ok) invalidateAll();
+
+					return response;
 				}
 				return status(405);
 			})

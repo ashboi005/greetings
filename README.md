@@ -114,6 +114,15 @@ step — but it is a step, and forgetting it is how a deploy half-works.
 | `DATABASE_STATEMENT_TIMEOUT_MS` | `15000` | The ceiling for a query somebody is waiting on. Batch jobs raise it for their own transaction; this is not the knob for them. |
 | `JOBS_SCHEDULE_UTC` | `02:30` | When the nightly job runs. UTC, not local: the analytics rollup buckets by UTC calendar day, so a local-time schedule would drift against the boundaries it exists to compute. |
 
+### Measuring
+
+```bash
+bun run bench      # database round trips per endpoint, warm
+```
+
+Every endpoint issues 0, 1 or 2 statements. If a change makes one climb, that is
+an N+1 appearing and the number will keep climbing with the data.
+
 ### Performance notes
 
 Measured against 200,000 published items and 2,000,000 download events (see
@@ -121,8 +130,11 @@ Measured against 200,000 published items and 2,000,000 download events (see
 
 - feed page, typical viewer — **3.4 ms**; a viewer with six languages — 61 ms
 - search with a term — ~98 ms
-- queries per request: 4 for `/v1/feed`, 2 for `/v1/auth/me`, 0 for auth on a cookie-cached web
-  request
+- database round trips: **2** for `/v1/feed`, **0** for `/v1/auth/me` and all reference
+  data, nothing above 2 anywhere (`bun run bench`)
+- responses are gzipped above 1KB — a tag list goes 3,187 → 687 bytes
+- under load, throughput flattens at ~1,200 rps and latency queues linearly;
+  100% success at 512 concurrent, sixteen times the useful concurrency
 
 The spec's §12.3 lists the ceilings that have not been addressed, and §15.1 lists what is
 deliberately not built at all. Both are worth reading before adding anything.
