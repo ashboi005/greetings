@@ -49,6 +49,40 @@ function assertEditable(status: string, message?: string): void {
 	}
 }
 
+/**
+ * Rechecks editability while atomically taking the content row lock.
+ *
+ * Route-level checks provide useful errors, but storage and validation work can
+ * happen after them. This write is the transaction's first operation so a
+ * concurrent submit either waits for the edit or wins and makes this return no
+ * row; an image or tag set can never change after submission.
+ */
+async function claimEditableContent(
+	// biome-ignore lint/suspicious/noExplicitAny: Drizzle's transaction type is not nameable here
+	tx: any,
+	input: {
+		contentId: string;
+		designerId: string;
+		patch?: Record<string, unknown>;
+	},
+): Promise<void> {
+	const [claimed] = await tx
+		.update(content)
+		.set({ ...input.patch, updatedAt: new Date() })
+		.where(
+			and(
+				eq(content.id, input.contentId),
+				eq(content.designerId, input.designerId),
+				inArray(content.status, [...EDITABLE_STATUSES]),
+			),
+		)
+		.returning({ id: content.id });
+
+	if (!claimed) {
+		throw conflict("Content is no longer editable.");
+	}
+}
+
 export function designerContentRoutes(storage: () => ObjectStorage) {
 	return new Elysia({ prefix: "/v1/designer" })
 		.use(authGuard)
@@ -323,6 +357,12 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 				// it. This is only reachable while the item is a draft or rejected,
 				// so nothing an admin has approved is being changed underneath them.
 				const superseded = await db.transaction(async (tx) => {
+					await claimEditableContent(tx, {
+						contentId: params.id,
+						designerId: designer.id,
+						patch: { primaryAssetKey: body.storageKey },
+					});
+
 					const previous = await tx
 						.delete(contentAssets)
 						.where(eq(contentAssets.contentId, params.id))
@@ -338,11 +378,6 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 						bytes: object.size,
 						checksum: body.checksum,
 					});
-
-					await tx
-						.update(content)
-						.set({ primaryAssetKey: body.storageKey })
-						.where(eq(content.id, params.id));
 
 					return previous.map((row) => row.storageKey);
 				});
@@ -483,6 +518,11 @@ export function designerContentRoutes(storage: () => ObjectStorage) {
 				}
 
 				await db.transaction(async (tx) => {
+					await claimEditableContent(tx, {
+						contentId: params.id,
+						designerId: designer.id,
+					});
+
 					await tx
 						.delete(contentTags)
 						.where(eq(contentTags.contentId, params.id));

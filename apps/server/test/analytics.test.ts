@@ -496,6 +496,16 @@ describe("date range handling", () => {
 		expect(res.body.error.message).toContain("from");
 	});
 
+	test("rejects an impossible calendar date before it reaches Postgres", async () => {
+		const res = await api.get(
+			"/v1/designer/analytics/summary?from=2026-02-31",
+			{ token: designerToken },
+		);
+
+		expect(res.status).toBe(400);
+		expect(res.body.error.message).toContain("from");
+	});
+
 	test("rejects a reversed range", async () => {
 		const res = await api.get(
 			`/v1/designer/analytics/summary?from=${today()}&to=${daysAgo(5)}`,

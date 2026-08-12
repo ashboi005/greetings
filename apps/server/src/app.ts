@@ -6,6 +6,7 @@ import { env } from "@greetings/env/server";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { compression } from "./lib/compression";
+import { csrfProtection } from "./lib/csrf-plugin";
 import { errorHandler } from "./lib/error-plugin";
 import { invalidateAll } from "./lib/session-cache";
 import { type ObjectStorage, requireObjectStorage } from "./lib/storage";
@@ -108,6 +109,7 @@ export function createApp(options: AppOptions = {}) {
 				}
 				return status(405);
 			})
+			.use(csrfProtection([env.CORS_ORIGIN, env.BETTER_AUTH_URL]))
 			.get("/", () => "OK")
 			.get(
 				"/health",

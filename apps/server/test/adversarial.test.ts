@@ -7,7 +7,7 @@
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
-import { content, userProfiles } from "@greetings/db/schema";
+import { content, reports, userProfiles } from "@greetings/db/schema";
 import { eq } from "drizzle-orm";
 import { createApp } from "../src/app";
 import { consumeGlobal, defaultStore } from "../src/lib/rate-limit";
@@ -349,6 +349,57 @@ describe("report resolution", () => {
 			.where(eq(content.id, id));
 		expect(row?.status).toBe("removed");
 	});
+
+	test("opposing decisions cannot both be accepted", async () => {
+		const id = await publish("Conflicting verdicts");
+		const firstReporter = await auth.signIn();
+		const secondReporter = await auth.signIn();
+		await api.post(`/v1/content/${id}/report`, {
+			token: firstReporter.token,
+			body: { reason: "spam" },
+		});
+		await api.post(`/v1/content/${id}/report`, {
+			token: secondReporter.token,
+			body: { reason: "spam" },
+		});
+
+		const openReports = await testDb
+			.select({ id: reports.id })
+			.from(reports)
+			.where(eq(reports.contentId, id));
+		const firstReportId = openReports[0]?.id;
+		const secondReportId = openReports[1]?.id;
+		if (!firstReportId || !secondReportId) {
+			throw new Error("Expected two open reports for the concurrency test");
+		}
+
+		const [keep, remove] = await Promise.all([
+			api.post(`/v1/admin/reports/${firstReportId}/resolve`, {
+				token: admin.token,
+				body: { action: "keep", note: "acceptable" },
+			}),
+			api.post(`/v1/admin/reports/${secondReportId}/resolve`, {
+				token: admin.token,
+				body: { action: "remove", note: "not acceptable" },
+			}),
+		]);
+
+		expect([keep.status, remove.status].sort()).toEqual([200, 409]);
+
+		const [row] = await testDb
+			.select({
+				status: content.status,
+				visibilityHold: content.visibilityHold,
+			})
+			.from(content)
+			.where(eq(content.id, id));
+
+		if (keep.status === 200) {
+			expect(row).toMatchObject({ status: "published", visibilityHold: false });
+		} else {
+			expect(row?.status).toBe("removed");
+		}
+	});
 });
 
 describe("concurrent approval", () => {
@@ -477,6 +528,75 @@ describe("replacing an image", () => {
 		// image. These used to be read from two different places.
 		expect(tile.storageKey).toBe(corrected);
 		expect(download.body.url).toContain(corrected);
+	});
+
+	test("cannot replace the reviewed image after submission wins the race", async () => {
+		const created = await api.post("/v1/designer/content", {
+			token: designer.token,
+			body: { title: "Submit race", primaryLanguage: "hi" },
+		});
+		const id = created.body.id as string;
+		const original = await uploadTo(id);
+		await api.put(`/v1/designer/content/${id}/tags`, {
+			token: designer.token,
+			body: { tagIds: ["tag_good-morning"] },
+		});
+
+		const replacement = await api.post(
+			`/v1/designer/content/${id}/upload-url`,
+			{
+				token: designer.token,
+				body: { mimeType: "image/jpeg", bytes: 2048 },
+			},
+		);
+		r2.putObject(replacement.body.storageKey);
+
+		let releaseStat!: () => void;
+		let markStatStarted!: () => void;
+		const statStarted = new Promise<void>((resolve) => {
+			markStatStarted = resolve;
+		});
+		const mayFinishStat = new Promise<void>((resolve) => {
+			releaseStat = resolve;
+		});
+		const delayedApp = createApp({
+			tokenVerifier: firebase.verifier,
+			objectStorage: {
+				...r2.storage,
+				async stat(key) {
+					markStatStarted();
+					await mayFinishStat;
+					return r2.storage.stat(key);
+				},
+			},
+		});
+		const delayedApi = client(delayedApp);
+
+		const confirm = delayedApi.post(`/v1/designer/content/${id}/assets`, {
+			token: designer.token,
+			body: {
+				storageKey: replacement.body.storageKey,
+				width: 1,
+				height: 1,
+			},
+		});
+
+		await statStarted;
+		const submitted = await api.post(`/v1/designer/content/${id}/submit`, {
+			token: designer.token,
+		});
+		releaseStat();
+		const confirmed = await confirm;
+
+		expect(submitted.status).toBe(200);
+		expect(confirmed.status).toBe(409);
+
+		const detail = await api.get(`/v1/designer/content/${id}`, {
+			token: designer.token,
+		});
+		expect(detail.body.status).toBe("pending_review");
+		expect(detail.body.assets).toHaveLength(1);
+		expect(detail.body.assets[0].storageKey).toBe(original);
 	});
 });
 

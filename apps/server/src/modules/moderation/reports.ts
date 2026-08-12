@@ -159,20 +159,40 @@ export async function resolveReport(input: {
 	action: "keep" | "remove";
 	note?: string;
 }): Promise<{ contentId: string; resolved: number; contentStatus: string }> {
-	const [report] = await db
-		.select({ contentId: reports.contentId, status: reports.status })
-		.from(reports)
-		.where(eq(reports.id, input.reportId))
-		.limit(1);
-
-	if (!report) throw notFound("No such report.");
-	if (report.status !== "open") {
-		throw conflict("This report has already been resolved.", {
-			status: report.status,
-		});
-	}
-
 	return db.transaction(async (tx) => {
+		const [candidate] = await tx
+			.select({ contentId: reports.contentId, status: reports.status })
+			.from(reports)
+			.where(eq(reports.id, input.reportId))
+			.limit(1);
+
+		if (!candidate) throw notFound("No such report.");
+
+		// The decision applies to the content, not just the clicked report. Lock
+		// that shared row first so requests naming different open reports cannot
+		// reach opposing verdicts. Every resolver takes locks in this same order,
+		// which also avoids a report-row/content-row deadlock.
+		await tx
+			.select({ id: content.id })
+			.from(content)
+			.where(eq(content.id, candidate.contentId))
+			.limit(1)
+			.for("update");
+
+		const [report] = await tx
+			.select({ contentId: reports.contentId, status: reports.status })
+			.from(reports)
+			.where(eq(reports.id, input.reportId))
+			.limit(1)
+			.for("update");
+
+		if (!report) throw notFound("No such report.");
+		if (report.status !== "open") {
+			throw conflict("This report has already been resolved.", {
+				status: report.status,
+			});
+		}
+
 		const resolved = await tx
 			.update(reports)
 			.set({
