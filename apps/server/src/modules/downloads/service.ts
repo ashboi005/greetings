@@ -14,7 +14,7 @@ import {
 	type DownloadSource,
 	downloadIdempotency,
 } from "@greetings/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { conflict, notFound } from "../../lib/errors";
 import type { ObjectStorage } from "../../lib/storage";
 
@@ -77,31 +77,20 @@ export async function recordDownload(input: {
 		expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
 	});
 
-	if (input.idempotencyKey) {
-		const claim = await claimIdempotencyKey({
-			userId: input.userId,
-			key: input.idempotencyKey,
-			contentId: input.contentId,
-			url,
-		});
-
-		if (!claim.fresh) {
-			// A retry. Return exactly what the first attempt returned, and record
-			// nothing — the whole point of the key.
-			return {
-				url: claim.storedUrl,
-				expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
-				recorded: false,
-			};
-		}
-	}
-
-	// The event and the counters, in one statement.
+	// Claiming the key, recording the event and moving the counters are one
+	// statement.
 	//
-	// This was a profile lookup, then BEGIN, an insert, an update and COMMIT —
-	// five round trips on the single most frequent write in the product. A
-	// data-modifying CTE runs in one implicit transaction, so it is exactly as
-	// atomic and costs one.
+	// They used to be two. The claim committed first, so a failure in the second
+	// left a key that suppresses retries for a download that was never recorded:
+	// the client is handed a URL and told `recorded: false`, and the designer is
+	// never paid for it. A data-modifying CTE runs in one implicit transaction,
+	// so either all of it happens or none of it does — and it still costs one
+	// round trip on the busiest write in the product.
+	//
+	// `claimed` is the gate. When the key is new, or old enough to have aged out
+	// of the replay window, the upsert returns a row and the two writes below it
+	// proceed. When it is a live replay the upsert returns nothing, the EXISTS
+	// guards are false, and neither write happens.
 	//
 	// The region is read inside the insert rather than fetched first. It is
 	// frozen onto the event on purpose, so analytics stay correct when someone
@@ -113,8 +102,38 @@ export async function recordDownload(input: {
 	// same update: it could have been left to the nightly pass, but that would
 	// mean a post taking off this morning is not ranked as popular until
 	// tomorrow, and folding it in costs nothing — it is the same single row.
-	await db.execute(sql`
-		WITH recorded AS (
+	const claimGate = input.idempotencyKey
+		? sql`
+			claimed AS (
+				INSERT INTO download_idempotency (id, user_id, key, content_id, signed_url)
+				VALUES (
+					${crypto.randomUUID()},
+					${input.userId},
+					${input.idempotencyKey},
+					${input.contentId},
+					${url}
+				)
+				ON CONFLICT (user_id, key) DO UPDATE SET
+					content_id = EXCLUDED.content_id,
+					signed_url = EXCLUDED.signed_url,
+					created_at = now()
+				WHERE download_idempotency.created_at
+					< now() - (${IDEMPOTENCY_WINDOW_SECONDS} || ' seconds')::interval
+				RETURNING id
+			),
+		`
+		: sql``;
+
+	const gate = input.idempotencyKey
+		? sql`WHERE EXISTS (SELECT 1 FROM claimed)`
+		: sql``;
+	const updateGate = input.idempotencyKey
+		? sql`AND EXISTS (SELECT 1 FROM claimed)`
+		: sql``;
+
+	const result = await db.execute(sql`
+		WITH ${claimGate}
+		recorded AS (
 			INSERT INTO download_events
 				(content_id, designer_id, user_id, region_code, language_code, source)
 			SELECT
@@ -128,61 +147,69 @@ export async function recordDownload(input: {
 				${input.source}::download_source
 			FROM (SELECT ${input.userId}::text AS uid) me
 			LEFT JOIN user_profiles p ON p.user_id = me.uid
+			${gate}
 		)
 		UPDATE content SET
 			download_count   = download_count + 1,
 			recent_downloads = recent_downloads + 1,
 			base_score       = ${bumpedBaseScore}
 		WHERE id = ${input.contentId}
+			${updateGate}
+		RETURNING id
 	`);
 
-	return { url, expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS, recorded: true };
+	if (result.rows.length > 0) {
+		return { url, expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS, recorded: true };
+	}
+
+	// Nothing was written, so this is a replay inside the window. Read back what
+	// the first attempt stored and hand over exactly that.
+	return replayDownload(input);
 }
 
 /**
- * Claims an idempotency key, or reports that it was already used.
+ * Answers a repeated Idempotency-Key with the original result.
  *
- * A single statement, because two retries can arrive concurrently: the upsert
- * refreshes the row only when the stored one has aged out of the window, and
- * returns nothing when it has not. "No rows returned" is therefore an exact
- * answer to "someone else already claimed this", with no read-then-write race.
+ * Rejects the key being reused for *different* content. That is not a retry, it
+ * is a client bug — and the old behaviour was to silently return the first
+ * image's URL, so a user who asked for one picture received another and the
+ * download went uncounted. A loud 409 is the only answer that cannot be
+ * mistaken for success.
  */
-async function claimIdempotencyKey(input: {
-	userId: string;
-	key: string;
+async function replayDownload(input: {
 	contentId: string;
-	url: string;
-}): Promise<{ fresh: true } | { fresh: false; storedUrl: string }> {
-	const claimed = await db
-		.insert(downloadIdempotency)
-		.values({
-			id: crypto.randomUUID(),
-			userId: input.userId,
-			key: input.key,
-			contentId: input.contentId,
-			signedUrl: input.url,
+	userId: string;
+	idempotencyKey?: string;
+}): Promise<DownloadResult> {
+	const [stored] = await db
+		.select({
+			contentId: downloadIdempotency.contentId,
+			signedUrl: downloadIdempotency.signedUrl,
 		})
-		.onConflictDoUpdate({
-			target: [downloadIdempotency.userId, downloadIdempotency.key],
-			set: {
-				contentId: input.contentId,
-				signedUrl: input.url,
-				createdAt: new Date(),
-			},
-			setWhere: sql`${downloadIdempotency.createdAt} < now() - (${IDEMPOTENCY_WINDOW_SECONDS} || ' seconds')::interval`,
-		})
-		.returning({ id: downloadIdempotency.id });
-
-	if (claimed.length > 0) return { fresh: true };
-
-	const [existing] = await db
-		.select({ signedUrl: downloadIdempotency.signedUrl })
 		.from(downloadIdempotency)
 		.where(
-			sql`${downloadIdempotency.userId} = ${input.userId} AND ${downloadIdempotency.key} = ${input.key}`,
+			and(
+				eq(downloadIdempotency.userId, input.userId),
+				eq(downloadIdempotency.key, input.idempotencyKey ?? ""),
+			),
 		)
 		.limit(1);
 
-	// The row must exist: nothing deletes it inside the window.
-	return { fresh: false, storedUrl: existing?.signedUrl ?? input.url };
+	// Nothing stored means the update matched no row for another reason — the
+	// content vanished between the read above and this write. Say so rather than
+	// inventing a success.
+	if (!stored) throw notFound("No such content.");
+
+	if (stored.contentId !== input.contentId) {
+		throw conflict(
+			"This Idempotency-Key was already used for different content. Use a new key for each download.",
+			{ claimedFor: stored.contentId },
+		);
+	}
+
+	return {
+		url: stored.signedUrl,
+		expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
+		recorded: false,
+	};
 }

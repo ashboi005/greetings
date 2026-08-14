@@ -30,6 +30,14 @@ export const REPORT_HOLD_THRESHOLD = 5;
 export const REPORT_RATE_LIMIT = 20;
 export const REPORT_RATE_WINDOW_MINUTES = 60;
 
+/**
+ * Namespace for the per-reporter advisory lock.
+ *
+ * Two-argument `pg_advisory_xact_lock` partitions the lock space, so this
+ * cannot collide with the nightly job's lock or anything added later.
+ */
+const REPORT_QUOTA_LOCK_NAMESPACE = 7714;
+
 export interface SubmitReportResult {
 	id: string;
 	status: "open";
@@ -59,18 +67,35 @@ export async function submitReport(input: {
 		});
 	}
 
-	await assertWithinRateLimit(input.reporterId);
-
 	const id = crypto.randomUUID();
 
+	// The quota check and the insert are one transaction, serialised per
+	// reporter.
+	//
+	// They used to be two independent statements: count, then insert. Twenty
+	// simultaneous reports could all read nineteen and all insert, so a limit
+	// meant to survive a restart did not survive a burst. The unique index
+	// stops duplicates on one item but says nothing about the hourly total.
+	//
+	// An advisory lock rather than a table lock: it is keyed on the reporter, so
+	// two different people never wait for each other, and it is transaction
+	// scoped, so it is released on commit or rollback without any unlock call.
 	try {
-		await db.insert(reports).values({
-			id,
-			contentId: input.contentId,
-			reporterId: input.reporterId,
-			reason: input.reason,
-			note: input.note,
-			status: "open",
+		await db.transaction(async (tx) => {
+			await tx.execute(
+				sql`SELECT pg_advisory_xact_lock(${REPORT_QUOTA_LOCK_NAMESPACE}, hashtext(${input.reporterId}))`,
+			);
+
+			await assertWithinRateLimit(tx, input.reporterId);
+
+			await tx.insert(reports).values({
+				id,
+				contentId: input.contentId,
+				reporterId: input.reporterId,
+				reason: input.reason,
+				note: input.note,
+				status: "open",
+			});
 		});
 	} catch (cause) {
 		if (isUniqueViolation(cause)) {
@@ -129,10 +154,14 @@ async function applyThresholdHold(contentId: string): Promise<boolean> {
 	});
 }
 
-async function assertWithinRateLimit(reporterId: string): Promise<void> {
+async function assertWithinRateLimit(
+	// biome-ignore lint/suspicious/noExplicitAny: Drizzle's transaction type is not nameable here
+	tx: any,
+	reporterId: string,
+): Promise<void> {
 	const since = new Date(Date.now() - REPORT_RATE_WINDOW_MINUTES * 60 * 1000);
 
-	const [recentRow] = await db
+	const [recentRow] = await tx
 		.select({ recent: count() })
 		.from(reports)
 		.where(
@@ -159,20 +188,40 @@ export async function resolveReport(input: {
 	action: "keep" | "remove";
 	note?: string;
 }): Promise<{ contentId: string; resolved: number; contentStatus: string }> {
-	const [report] = await db
-		.select({ contentId: reports.contentId, status: reports.status })
-		.from(reports)
-		.where(eq(reports.id, input.reportId))
-		.limit(1);
-
-	if (!report) throw notFound("No such report.");
-	if (report.status !== "open") {
-		throw conflict("This report has already been resolved.", {
-			status: report.status,
-		});
-	}
-
 	return db.transaction(async (tx) => {
+		const [candidate] = await tx
+			.select({ contentId: reports.contentId, status: reports.status })
+			.from(reports)
+			.where(eq(reports.id, input.reportId))
+			.limit(1);
+
+		if (!candidate) throw notFound("No such report.");
+
+		// The decision applies to the content, not just the clicked report. Lock
+		// that shared row first so requests naming different open reports cannot
+		// reach opposing verdicts. Every resolver takes locks in this same order,
+		// which also avoids a report-row/content-row deadlock.
+		await tx
+			.select({ id: content.id })
+			.from(content)
+			.where(eq(content.id, candidate.contentId))
+			.limit(1)
+			.for("update");
+
+		const [report] = await tx
+			.select({ contentId: reports.contentId, status: reports.status })
+			.from(reports)
+			.where(eq(reports.id, input.reportId))
+			.limit(1)
+			.for("update");
+
+		if (!report) throw notFound("No such report.");
+		if (report.status !== "open") {
+			throw conflict("This report has already been resolved.", {
+				status: report.status,
+			});
+		}
+
 		const resolved = await tx
 			.update(reports)
 			.set({

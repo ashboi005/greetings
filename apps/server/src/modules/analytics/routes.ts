@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { badRequest } from "../../lib/errors";
+import { assertIsoDate } from "../../lib/iso-date";
 import { authGuard, requireUser } from "../auth/session";
 import {
 	type AnalyticsScope,
@@ -54,14 +55,6 @@ function resolveScope(
 	}
 
 	return { designerId, from, to, today };
-}
-
-function assertIsoDate(value: string, field: string) {
-	// Checked here rather than in the schema so the message names the field
-	// and the client is not left guessing which date was malformed.
-	if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value))) {
-		throw badRequest(`\`${field}\` must be a date in YYYY-MM-DD form.`);
-	}
 }
 
 export function analyticsRoutes() {

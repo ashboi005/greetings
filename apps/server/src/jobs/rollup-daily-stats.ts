@@ -39,7 +39,15 @@ export function previousDay(now: Date = new Date()): string {
  * table briefly empty for that date.
  */
 export async function rollupDay(statDate: string): Promise<RollupResult> {
-	const result = await db.execute(sql`
+	// The upsert and the prune are one transaction.
+	//
+	// Each is idempotent alone, but the pair is not: a failure between them
+	// leaves recomputed totals sitting beside stale rows from a previous run,
+	// and a dashboard reading that moment shows a day that never existed. The
+	// next run repairs it — but "wrong until someone notices" is not a property
+	// worth keeping when a transaction costs nothing here.
+	return db.transaction(async (tx) => {
+		const result = await tx.execute(sql`
 		INSERT INTO daily_content_stats
 			(stat_date, content_id, designer_id, region_code, downloads, unique_users, computed_at)
 		SELECT
@@ -63,11 +71,12 @@ export async function rollupDay(statDate: string): Promise<RollupResult> {
 			computed_at = EXCLUDED.computed_at
 	`);
 
-	// A recomputation that finds no events for a date must clear any rows left
-	// from a previous run, or deleted content would keep reporting downloads.
-	await pruneStaleRows(statDate);
+		// A recomputation that finds no events for a date must clear any rows left
+		// from a previous run, or deleted content would keep reporting downloads.
+		await pruneStaleRows(tx, statDate);
 
-	return { statDate, rows: result.rowCount ?? 0 };
+		return { statDate, rows: result.rowCount ?? 0 };
+	});
 }
 
 /**
@@ -77,8 +86,12 @@ export async function rollupDay(statDate: string): Promise<RollupResult> {
  * content removed, a user's data erased — the stale aggregate would survive
  * and the rollup would disagree with the events it claims to summarise.
  */
-async function pruneStaleRows(statDate: string): Promise<void> {
-	await db.execute(sql`
+async function pruneStaleRows(
+	// biome-ignore lint/suspicious/noExplicitAny: Drizzle's transaction type is not nameable here
+	tx: any,
+	statDate: string,
+): Promise<void> {
+	await tx.execute(sql`
 		DELETE FROM daily_content_stats s
 		WHERE s.stat_date = ${statDate}::date
 			AND NOT EXISTS (

@@ -6,6 +6,7 @@ import { env } from "@greetings/env/server";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { compression } from "./lib/compression";
+import { csrfProtection } from "./lib/csrf-plugin";
 import { errorHandler } from "./lib/error-plugin";
 import { invalidateAll } from "./lib/session-cache";
 import { type ObjectStorage, requireObjectStorage } from "./lib/storage";
@@ -93,6 +94,8 @@ export function createApp(options: AppOptions = {}) {
 					exclude: { paths: ["/api/auth/*"] },
 				}),
 			)
+			// Registered before the auth handler so its routes are covered too.
+			.use(csrfProtection([env.CORS_ORIGIN, env.BETTER_AUTH_URL]))
 			.all("/api/auth/*", async ({ request, status }) => {
 				if (["POST", "GET"].includes(request.method)) {
 					const response = await auth.handler(request);

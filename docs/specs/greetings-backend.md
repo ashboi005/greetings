@@ -709,6 +709,59 @@ ceiling being raised for everyone.
 
 ---
 
+## 14h. Constraints discovered during the external review pass
+
+An outside review found four defects; verifying them turned up three more that
+it had missed or misdiagnosed. Each of these cost real time to establish.
+
+**CORS is not a mutation boundary.** With `SameSite=None` cookies, a cross-site
+form can cause a privileged write; CORS only decides whether the attacker may
+*read* the reply. Confirmed by exploit: a form posted from another origin
+promoted an account to `super_admin`. Unsafe cookie-authenticated requests now
+require a trusted `Origin`. Bearer clients are exempt — a cross-site form cannot
+manufacture an `Authorization` header.
+
+**Better Auth does not check the origin of its own routes.** The guard
+originally exempted `/api/auth/*` on the assumption that Better Auth owned that
+contract. It does not: a cross-site `POST /api/auth/sign-out` was accepted, so
+an attacker page could log an administrator out. The exemption is gone.
+
+**A check before an `await` is not a check.** Designer asset and tag writes
+validated "still editable", then did storage or validation work, then wrote. A
+submit landing in that window meant an admin reviewed one image and a different
+one went live. The authoritative check has to be the conditional `UPDATE` that
+does the writing.
+
+**Lock the thing the decision is about.** Two admins resolving *different*
+report rows on the *same* content both succeeded, reaching opposite verdicts.
+Locking the report was too narrow; resolution now locks the content row first,
+in the same order the threshold hold takes it, so there is no deadlock.
+
+**`Date.parse` normalises impossible dates.** `2026-02-31` parses happily and
+becomes 3 March. Shape plus parseability is not calendar validity: the value has
+to survive a round trip through `toISOString` unchanged.
+
+**Losing a race to create your own account is not an error.** Concurrent first
+sign-ins for one Firebase subject collided on the unique email and returned 500
+to every caller but the winner — measured at three in four. The collision is the
+answer arriving from elsewhere, so the lookup is retried once. `account` also
+gained the `(provider_id, account_id)` unique index that should always have
+expressed "one external identity is one row".
+
+**An idempotency key must not be able to commit alone.** The claim was written
+before the event and counters, so a failure in between left a key suppressing
+retries for a download that was never recorded. Worse and deterministic: reusing
+one key for *different* content returned the first image's URL, so a user asked
+for one picture and received another, uncounted. Claim, event and counters are
+now one statement, and cross-content reuse is a 409.
+
+**A durable limit still needs serialising.** The hourly report quota counted and
+then inserted as two statements, so a burst of thirty simultaneous reports all
+read the same total and all committed. A transaction-scoped advisory lock keyed
+on the reporter fixes it without making unrelated reporters wait.
+
+---
+
 ## 14a. Constraints discovered while building M1
 
 Non-obvious behaviours that shaped the code. Each is enforced by a test or a comment at the

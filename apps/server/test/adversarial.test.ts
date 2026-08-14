@@ -7,11 +7,19 @@
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
-import { content, userProfiles } from "@greetings/db/schema";
-import { eq } from "drizzle-orm";
+import {
+	account,
+	content,
+	downloadEvents,
+	downloadIdempotency,
+	reports,
+	userProfiles,
+} from "@greetings/db/schema";
+import { and, eq } from "drizzle-orm";
 import { createApp } from "../src/app";
 import { consumeGlobal, defaultStore } from "../src/lib/rate-limit";
 import { FIREBASE_VERIFY_GLOBAL_LIMIT } from "../src/modules/auth/routes";
+import { REPORT_RATE_LIMIT } from "../src/modules/moderation/reports";
 import { testDb, truncateAll } from "./db";
 import { fakeObjectStorage, fakeTokenVerifier } from "./fakes";
 import { authHelper, client, seedReference } from "./helpers";
@@ -349,6 +357,57 @@ describe("report resolution", () => {
 			.where(eq(content.id, id));
 		expect(row?.status).toBe("removed");
 	});
+
+	test("opposing decisions cannot both be accepted", async () => {
+		const id = await publish("Conflicting verdicts");
+		const firstReporter = await auth.signIn();
+		const secondReporter = await auth.signIn();
+		await api.post(`/v1/content/${id}/report`, {
+			token: firstReporter.token,
+			body: { reason: "spam" },
+		});
+		await api.post(`/v1/content/${id}/report`, {
+			token: secondReporter.token,
+			body: { reason: "spam" },
+		});
+
+		const openReports = await testDb
+			.select({ id: reports.id })
+			.from(reports)
+			.where(eq(reports.contentId, id));
+		const firstReportId = openReports[0]?.id;
+		const secondReportId = openReports[1]?.id;
+		if (!firstReportId || !secondReportId) {
+			throw new Error("Expected two open reports for the concurrency test");
+		}
+
+		const [keep, remove] = await Promise.all([
+			api.post(`/v1/admin/reports/${firstReportId}/resolve`, {
+				token: admin.token,
+				body: { action: "keep", note: "acceptable" },
+			}),
+			api.post(`/v1/admin/reports/${secondReportId}/resolve`, {
+				token: admin.token,
+				body: { action: "remove", note: "not acceptable" },
+			}),
+		]);
+
+		expect([keep.status, remove.status].sort()).toEqual([200, 409]);
+
+		const [row] = await testDb
+			.select({
+				status: content.status,
+				visibilityHold: content.visibilityHold,
+			})
+			.from(content)
+			.where(eq(content.id, id));
+
+		if (keep.status === 200) {
+			expect(row).toMatchObject({ status: "published", visibilityHold: false });
+		} else {
+			expect(row?.status).toBe("removed");
+		}
+	});
 });
 
 describe("concurrent approval", () => {
@@ -478,6 +537,75 @@ describe("replacing an image", () => {
 		expect(tile.storageKey).toBe(corrected);
 		expect(download.body.url).toContain(corrected);
 	});
+
+	test("cannot replace the reviewed image after submission wins the race", async () => {
+		const created = await api.post("/v1/designer/content", {
+			token: designer.token,
+			body: { title: "Submit race", primaryLanguage: "hi" },
+		});
+		const id = created.body.id as string;
+		const original = await uploadTo(id);
+		await api.put(`/v1/designer/content/${id}/tags`, {
+			token: designer.token,
+			body: { tagIds: ["tag_good-morning"] },
+		});
+
+		const replacement = await api.post(
+			`/v1/designer/content/${id}/upload-url`,
+			{
+				token: designer.token,
+				body: { mimeType: "image/jpeg", bytes: 2048 },
+			},
+		);
+		r2.putObject(replacement.body.storageKey);
+
+		let releaseStat!: () => void;
+		let markStatStarted!: () => void;
+		const statStarted = new Promise<void>((resolve) => {
+			markStatStarted = resolve;
+		});
+		const mayFinishStat = new Promise<void>((resolve) => {
+			releaseStat = resolve;
+		});
+		const delayedApp = createApp({
+			tokenVerifier: firebase.verifier,
+			objectStorage: {
+				...r2.storage,
+				async stat(key) {
+					markStatStarted();
+					await mayFinishStat;
+					return r2.storage.stat(key);
+				},
+			},
+		});
+		const delayedApi = client(delayedApp);
+
+		const confirm = delayedApi.post(`/v1/designer/content/${id}/assets`, {
+			token: designer.token,
+			body: {
+				storageKey: replacement.body.storageKey,
+				width: 1,
+				height: 1,
+			},
+		});
+
+		await statStarted;
+		const submitted = await api.post(`/v1/designer/content/${id}/submit`, {
+			token: designer.token,
+		});
+		releaseStat();
+		const confirmed = await confirm;
+
+		expect(submitted.status).toBe(200);
+		expect(confirmed.status).toBe(409);
+
+		const detail = await api.get(`/v1/designer/content/${id}`, {
+			token: designer.token,
+		});
+		expect(detail.body.status).toBe("pending_review");
+		expect(detail.body.assets).toHaveLength(1);
+		expect(detail.body.assets[0].storageKey).toBe(original);
+	});
 });
 
 describe("what the designer detail endpoint returns", () => {
@@ -502,5 +630,234 @@ describe("what the designer detail endpoint returns", () => {
 		]) {
 			expect(Object.keys(detail.body)).not.toContain(leaked);
 		}
+	});
+});
+
+describe("download idempotency", () => {
+	async function publishTwo() {
+		const first = await publish("Image A");
+		const second = await publish("Image B");
+		const reader = await auth.signIn();
+		await api.put("/v1/me/profile", {
+			token: reader.token,
+			body: { regionCode: "IN-MH", languages: ["hi"] },
+		});
+		return { first, second, reader };
+	}
+
+	const download = (contentId: string, token: string, key?: string) =>
+		app
+			.handle(
+				new Request(`http://localhost/v1/content/${contentId}/download`, {
+					method: "POST",
+					headers: {
+						authorization: `Bearer ${token}`,
+						"content-type": "application/json",
+						...(key ? { "idempotency-key": key } : {}),
+					},
+					body: "{}",
+				}),
+			)
+			.then(async (res) => ({
+				status: res.status,
+				// biome-ignore lint/suspicious/noExplicitAny: test ergonomics, as elsewhere in this file
+				body: (await res.json()) as any,
+			}));
+
+	test("reusing one key for different content is refused, not silently wrong", async () => {
+		const { first, second, reader } = await publishTwo();
+
+		const a = await download(first, reader.token, "same-key");
+		const b = await download(second, reader.token, "same-key");
+
+		expect(a.status).toBe(200);
+		// The old behaviour handed back the *first* image's URL for a request
+		// naming the second — the user asked for one picture and got another,
+		// and the download went uncounted.
+		expect(b.status).toBe(409);
+		expect(b.body.error.code).toBe("CONFLICT");
+
+		const [row] = await testDb
+			.select({ count: content.downloadCount })
+			.from(content)
+			.where(eq(content.id, second));
+		expect(row?.count).toBe(0);
+	});
+
+	test("a genuine retry returns the same URL and counts once", async () => {
+		const { first, reader } = await publishTwo();
+
+		const a = await download(first, reader.token, "retry-key");
+		const b = await download(first, reader.token, "retry-key");
+
+		expect(a.body.url).toBe(b.body.url);
+		expect(a.body.recorded).toBe(true);
+		expect(b.body.recorded).toBe(false);
+
+		const [row] = await testDb
+			.select({ count: content.downloadCount })
+			.from(content)
+			.where(eq(content.id, first));
+		expect(row?.count).toBe(1);
+	});
+
+	test("a claimed key always has the download that justifies it", async () => {
+		const { first, reader } = await publishTwo();
+		await download(first, reader.token, "atomic-key");
+
+		// The property the split claim could violate: a key exists suppressing
+		// retries, but no event was ever recorded and the designer was never
+		// credited. Claim and record are one statement now, so a stored key
+		// implies a stored event.
+		const claims = await testDb
+			.select()
+			.from(downloadIdempotency)
+			.where(eq(downloadIdempotency.key, "atomic-key"));
+		const events = await testDb
+			.select()
+			.from(downloadEvents)
+			.where(eq(downloadEvents.contentId, first));
+
+		expect(claims).toHaveLength(1);
+		expect(events).toHaveLength(1);
+	});
+
+	test("concurrent retries of one key record exactly one download", async () => {
+		const { first, reader } = await publishTwo();
+
+		const results = await Promise.all(
+			Array.from({ length: 5 }, () =>
+				download(first, reader.token, "concurrent-key"),
+			),
+		);
+
+		expect(results.every((r) => r.status === 200)).toBe(true);
+		expect(results.filter((r) => r.body.recorded).length).toBe(1);
+
+		const events = await testDb
+			.select()
+			.from(downloadEvents)
+			.where(eq(downloadEvents.contentId, first));
+		expect(events).toHaveLength(1);
+	});
+
+	test("without a key, every download counts", async () => {
+		const { first, reader } = await publishTwo();
+
+		await download(first, reader.token);
+		await download(first, reader.token);
+
+		const [row] = await testDb
+			.select({ count: content.downloadCount })
+			.from(content)
+			.where(eq(content.id, first));
+		expect(row?.count).toBe(2);
+	});
+});
+
+describe("concurrent first sign-in", () => {
+	test("one identity, many devices at once, one user and no 500s", async () => {
+		firebase.register("burst", {
+			subject: "uid-burst",
+			phone: "+919000009999",
+		});
+
+		const results = await Promise.all(
+			Array.from({ length: 6 }, () =>
+				api.post("/v1/auth/firebase", {
+					body: { idToken: "burst" },
+					ip: "203.0.113.60",
+				}),
+			),
+		);
+
+		// Losing a race to create your own account is not your problem to see.
+		// This used to hand 500s to everyone but the winner.
+		expect(results.map((r) => r.status)).toEqual(Array(6).fill(200));
+
+		const ids = new Set(results.map((r) => r.body.user.id));
+		expect(ids.size).toBe(1);
+
+		const rows = await testDb
+			.select()
+			.from(account)
+			.where(
+				and(
+					eq(account.providerId, "firebase"),
+					eq(account.accountId, "uid-burst"),
+				),
+			);
+		expect(rows).toHaveLength(1);
+	});
+
+	test("an existing identity linking concurrently stays one account row", async () => {
+		await auth.signIn({ email: "linkrace@example.com" });
+
+		firebase.register("linkburst", {
+			subject: "uid-linkburst",
+			email: "linkrace@example.com",
+			emailVerified: true,
+		});
+
+		const results = await Promise.all(
+			Array.from({ length: 6 }, () =>
+				api.post("/v1/auth/firebase", {
+					body: { idToken: "linkburst" },
+					ip: "203.0.113.61",
+				}),
+			),
+		);
+
+		expect(results.every((r) => r.status === 200)).toBe(true);
+
+		// The linking path inserts an account row without creating a user, so
+		// nothing else would have caught a duplicate.
+		const rows = await testDb
+			.select()
+			.from(account)
+			.where(
+				and(
+					eq(account.providerId, "firebase"),
+					eq(account.accountId, "uid-linkburst"),
+				),
+			);
+		expect(rows).toHaveLength(1);
+	});
+});
+
+describe("the durable report quota", () => {
+	test("a burst of simultaneous reports cannot exceed the hourly limit", async () => {
+		const reporter = await auth.signIn();
+
+		// One report each on many different items, all fired at once. The unique
+		// index only stops a second report on the *same* item, so it offers no
+		// protection here — the quota has to hold on its own.
+		const items = await Promise.all(
+			Array.from({ length: REPORT_RATE_LIMIT + 10 }, (_, i) =>
+				publish(`Quota target ${i}`),
+			),
+		);
+
+		const results = await Promise.all(
+			items.map((id) =>
+				api.post(`/v1/content/${id}/report`, {
+					token: reporter.token,
+					body: { reason: "spam" },
+				}),
+			),
+		);
+
+		const accepted = results.filter((r) => r.status === 200).length;
+		const throttled = results.filter((r) => r.status === 429).length;
+
+		// Count-then-insert let every request read the same total and pass.
+		expect(accepted).toBe(REPORT_RATE_LIMIT);
+		expect(throttled).toBe(10);
+
+		const stored = await testDb
+			.select()
+			.from(reports)
+			.where(eq(reports.reporterId, reporter.userId));
+		expect(stored).toHaveLength(REPORT_RATE_LIMIT);
 	});
 });
