@@ -422,3 +422,29 @@ No secret, `.env`, migration, generated build artifact, dependency update, lockf
 - Notifications, response localization, download history, backend image processing, and other explicitly excluded product scope.
 
 These are not defects in the reviewed Phase 1/2 repository and should not be mixed into the launch-fix branch without an approved product plan.
+
+---
+
+## 12. Resolution (follow-up pass)
+
+The findings above were verified against a running PostgreSQL, which the
+original pass could not reach. All four fixes were confirmed genuine: reverting
+each one makes its regression test fail, and the CSRF finding was confirmed by
+exploit — a cross-site form promoted an account to `super_admin`, and the same
+request returns 403 after the fix. Full suite: 476 passing.
+
+Every deferred finding has since been closed, with three corrections:
+
+| ID | Original status | Now | Correction |
+|---|---|---|---|
+| F-005 | Deferred, Medium | **Fixed** | Understated. Beyond the failure window, reusing one key for different content deterministically returned the *wrong image*, uncounted. Claim, event and counters are one statement; cross-content reuse is a 409. |
+| F-006 | Deferred | **Fixed** | Confirmed by test: a burst of 30 concurrent reports all committed against a limit of 20. Advisory lock keyed per reporter. |
+| F-007 | Deferred, "duplicate rows" | **Fixed** | Misdiagnosed. Duplicate rows do not occur — `user.email` is unique and blocks them. The real defect is that concurrent first sign-in returns **500** to all but one caller. Adding the recommended index alone would have swapped one 500 for another; the fix is the index *plus* retrying the lookup. |
+| F-008 | Deferred | **Fixed** | Upsert and prune now share a transaction. |
+| F-009 | Deferred | **Fixed** | Bun pinned to 1.3.10, `--frozen-lockfile`, non-root runtime. Both images built and run: server reaches the database and serves health/readiness, web serves its routes, both as uid 10001. |
+| F-010 | Deferred | **Fixed** | The stated blocker does not exist in this repository. Biome reports **0** findings in `apps/web` and 4 in `packages/ui` scaffold — not 161. The CRLF debt appears to have been an artefact of the reviewing environment. CI now lints `apps/web`, builds it, and runs the query-count benchmark. |
+
+One finding the review missed: it exempted `/api/auth/*` from the CSRF guard on
+the grounds that Better Auth owns that contract. It does not check request
+origin — a cross-site sign-out was accepted. The exemption has been removed and
+sign-in, the OAuth callback and bearer clients were each verified unaffected.

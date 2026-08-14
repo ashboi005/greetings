@@ -17,7 +17,7 @@ import {
 	user as userTable,
 } from "@greetings/db/schema";
 import { and, eq, isNull, or } from "drizzle-orm";
-import { AppError } from "../../lib/errors";
+import { AppError, isUniqueViolation } from "../../lib/errors";
 import type { VerifiedIdentity } from "../../lib/token-verifier";
 
 const FIREBASE_PROVIDER_ID = "firebase";
@@ -46,7 +46,62 @@ export interface SignInResult {
 export async function signInWithVerifiedIdentity(
 	identity: VerifiedIdentity,
 ): Promise<SignInResult> {
-	const { userId, created } = await db.transaction(async (tx) => {
+	// Two devices signing in at the same instant both find no account and both
+	// try to create one. Whichever loses hits a unique constraint — on the
+	// placeholder email, or now on the provider identity itself — and used to
+	// surface as a 500 to a user who had done nothing wrong. Measured: three of
+	// four concurrent first sign-ins failed that way.
+	//
+	// Losing that race is not an error, it is the answer arriving from somewhere
+	// else. Retrying once re-runs the lookup, finds the row the winner just
+	// committed, and returns the same user. Once, not in a loop: a second
+	// collision would mean something other than this race, and a sign-in path
+	// that retries indefinitely is a way to hide a real fault.
+	const { userId, created } = await withUniqueRetry(() =>
+		findOrCreateUser(identity),
+	);
+
+	const [row] = await db
+		.select({
+			id: userTable.id,
+			email: userTable.email,
+			name: userTable.name,
+			role: userTable.role,
+			onboardedAt: userProfiles.onboardedAt,
+		})
+		.from(userTable)
+		.leftJoin(userProfiles, eq(userProfiles.userId, userTable.id))
+		.where(eq(userTable.id, userId))
+		.limit(1);
+
+	if (!row) {
+		throw new AppError("INTERNAL", "User vanished during sign-in");
+	}
+
+	const token = await createSessionToken(userId);
+
+	return {
+		token,
+		user: { id: row.id, email: row.email, name: row.name, role: row.role },
+		onboarded: row.onboardedAt !== null,
+		created,
+	};
+}
+
+/** Runs `work`, retrying once if it lost a race to create the same identity. */
+async function withUniqueRetry<T>(work: () => Promise<T>): Promise<T> {
+	try {
+		return await work();
+	} catch (cause) {
+		if (!isUniqueViolation(cause)) throw cause;
+		return work();
+	}
+}
+
+async function findOrCreateUser(
+	identity: VerifiedIdentity,
+): Promise<{ userId: string; created: boolean }> {
+	return db.transaction(async (tx) => {
 		// 1. Have we seen this Firebase account before?
 		const [existingAccount] = await tx
 			.select({ userId: account.userId })
@@ -131,32 +186,6 @@ export async function signInWithVerifiedIdentity(
 
 		return { userId: resolvedUserId, created: !linkedUserId };
 	});
-
-	const [row] = await db
-		.select({
-			id: userTable.id,
-			email: userTable.email,
-			name: userTable.name,
-			role: userTable.role,
-			onboardedAt: userProfiles.onboardedAt,
-		})
-		.from(userTable)
-		.leftJoin(userProfiles, eq(userProfiles.userId, userTable.id))
-		.where(eq(userTable.id, userId))
-		.limit(1);
-
-	if (!row) {
-		throw new AppError("INTERNAL", "User vanished during sign-in");
-	}
-
-	const token = await createSessionToken(userId);
-
-	return {
-		token,
-		user: { id: row.id, email: row.email, name: row.name, role: row.role },
-		onboarded: row.onboardedAt !== null,
-		created,
-	};
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];

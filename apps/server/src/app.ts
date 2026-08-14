@@ -94,6 +94,8 @@ export function createApp(options: AppOptions = {}) {
 					exclude: { paths: ["/api/auth/*"] },
 				}),
 			)
+			// Registered before the auth handler so its routes are covered too.
+			.use(csrfProtection([env.CORS_ORIGIN, env.BETTER_AUTH_URL]))
 			.all("/api/auth/*", async ({ request, status }) => {
 				if (["POST", "GET"].includes(request.method)) {
 					const response = await auth.handler(request);
@@ -109,7 +111,6 @@ export function createApp(options: AppOptions = {}) {
 				}
 				return status(405);
 			})
-			.use(csrfProtection([env.CORS_ORIGIN, env.BETTER_AUTH_URL]))
 			.get("/", () => "OK")
 			.get(
 				"/health",

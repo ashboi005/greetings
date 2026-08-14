@@ -52,10 +52,11 @@ jobs:
           psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
           psql "$TEST_DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
 
-      # Phase 1 owns the backend; the scaffolded web/native/ui code still has
-      # lint violations that Phase 2 will clear. Widen this as those land.
+      # apps/web is included now that the panels have landed and are clean.
+      # apps/native and packages/ui are still scaffold — Phase 3 and shadcn
+      # respectively — and are deliberately outside this until someone owns them.
       - name: Lint and format
-        run: bunx biome check apps/server packages/db packages/env packages/auth
+        run: bunx biome check apps/server apps/web packages/db packages/env packages/auth
 
       - name: Typecheck
         run: bun run check-types
@@ -71,5 +72,18 @@ jobs:
       - name: Test
         run: bun run test
 
-      - name: Build
+      - name: Build server
         run: bun run --filter server build
+
+      # The panels are shipped code; a production build failure should stop a
+      # merge rather than a deploy. The URL is a placeholder — it is baked into
+      # the bundle at build time and nothing in CI calls it.
+      - name: Build web
+        env:
+          NEXT_PUBLIC_SERVER_URL: http://localhost:3000
+        run: bun run --filter web build
+
+      # Query counts per endpoint. An N+1 creeping back in shows up here as a
+      # number that climbs with the data.
+      - name: Benchmark database round trips
+        run: bun run bench

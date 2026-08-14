@@ -9,17 +9,20 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * the mutation in the first place.
  *
  * Bearer clients do not rely on ambient browser credentials and therefore do
- * not need an Origin header. Better Auth is excluded because it owns the CSRF
- * contract for its own routes.
+ * not need an Origin header.
+ *
+ * This covers Better Auth's own routes too. That exemption was tried and
+ * removed: a cross-site POST to /api/auth/sign-out was accepted, so an attacker
+ * page could log an administrator out at will. Nuisance rather than danger, but
+ * the exemption was buying nothing. Sign-in and the OAuth callback are
+ * unaffected — the callback is a GET, and the panel's sign-in POST carries its
+ * own Origin.
  */
 export function assertSafeCookieMutation(
 	request: Request,
 	trustedOrigins: ReadonlySet<string>,
 ): void {
 	if (SAFE_METHODS.has(request.method)) return;
-
-	const pathname = new URL(request.url).pathname;
-	if (pathname.startsWith("/api/auth/")) return;
 
 	if (!request.headers.has("cookie")) return;
 	if (request.headers.get("authorization")?.startsWith("Bearer ")) return;

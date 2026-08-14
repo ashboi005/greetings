@@ -6,6 +6,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -92,7 +93,17 @@ export const account = pgTable(
 			.$onUpdate(() => /* @__PURE__ */ new Date())
 			.notNull(),
 	},
-	(table) => [index("account_userId_idx").on(table.userId)],
+	(table) => [
+		index("account_userId_idx").on(table.userId),
+		// One external identity is one account row. Without this the invariant
+		// lives only in application lookup code, so two concurrent first
+		// sign-ins for the same Firebase subject could each insert a row and
+		// leave the identity ambiguous — with no error to notice at the time.
+		uniqueIndex("account_provider_identity_idx").on(
+			table.providerId,
+			table.accountId,
+		),
+	],
 );
 
 export const verification = pgTable(
