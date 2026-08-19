@@ -99,7 +99,10 @@ it safe to run alongside the container:
 ```
 
 **Migrations are not automatic.** A deploy that changes the schema needs
-`bun run db:migrate` run against production first. Doing it on boot would mean
+`bun run db:migrate` run against production first. That command creates the
+`pg_trgm` extension before applying anything, because two migrations build
+trigram indexes that depend on it — a fresh managed Postgres does not have it,
+and the schema should not depend on something outside its own history. Doing it on boot would mean
 several instances racing the same migration, so it is deliberately a separate
 step — but it is a step, and forgetting it is how a deploy half-works.
 

@@ -762,6 +762,31 @@ on the reporter fixes it without making unrelated reporters wait.
 
 ---
 
+## 14i. Constraints discovered while deploying
+
+**A schema must not depend on anything outside its own migration history.** Two
+migrations build trigram indexes with `gin_trgm_ops`, which needs the `pg_trgm`
+extension — and nothing created it. Locally it came from `scripts/init-db.sql`,
+in CI from an explicit `psql` step, and in production from nowhere at all, so a
+fresh database failed at migration 0002. Both of those props hid the gap for
+months; neither runs where it mattered.
+
+**`drizzle-kit migrate` swallows the error.** It prints a spinner, exits 1, and
+says nothing about why — the worst possible behaviour for the one command run by
+hand against production. `bun run db:migrate` is now a small script using
+drizzle's programmatic migrator, which creates the extension, names the database
+it is about to touch, and prints the actual failure.
+
+**A bootstrap-only variable must not be able to stop the server booting.**
+`SUPER_ADMIN_PASSWORD` had a length minimum in the shared env schema, so a short
+value broke everything that loads the environment — including `db:seed` — while
+`db:migrate` carried on, because drizzle-kit reads `process.env` directly and
+never passes through validation. A configuration mistake that breaks some
+commands and not others is worse than one that breaks all of them. The length is
+checked in the job that uses it.
+
+---
+
 ## 14a. Constraints discovered while building M1
 
 Non-obvious behaviours that shaped the code. Each is enforced by a test or a comment at the

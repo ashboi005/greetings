@@ -16,8 +16,8 @@
 		"db:push": "drizzle-kit push",
 		"db:generate": "drizzle-kit generate",
 		"db:studio": "drizzle-kit studio",
-		"db:migrate": "drizzle-kit migrate",
-		"db:migrate:test": "drizzle-kit migrate --config drizzle.test.config.ts",
+		"db:migrate": "bun run src/migrate.ts",
+		"db:migrate:test": "bun run src/migrate.ts --test",
 		"db:seed": "bun run src/seed/run.ts",
 		"db:seed:demo": "bun run src/seed/demo-run.ts"
 	},
