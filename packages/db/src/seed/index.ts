@@ -74,17 +74,21 @@ export async function seedReferenceData(): Promise<{
  */
 export async function seedSuperAdmin(
 	email: string,
-): Promise<{ promoted: boolean; reason?: string }> {
+): Promise<{ promoted: boolean; created?: boolean; reason?: string }> {
+	const normalised = email.trim().toLowerCase();
+
 	const [target] = await db
 		.select({ id: userTable.id, role: userTable.role })
 		.from(userTable)
-		.where(eq(userTable.email, email))
+		.where(eq(userTable.email, normalised))
 		.limit(1);
 
 	if (!target) {
 		return {
 			promoted: false,
-			reason: `No user with email ${email}. Sign in once, then re-run.`,
+			reason:
+				`No user with email ${normalised}. Run \`bun run jobs create-admin\` ` +
+				"to create the first panel account, or sign in once and re-run.",
 		};
 	}
 
@@ -116,7 +120,7 @@ export async function seedSuperAdmin(
 		await tx.delete(session).where(eq(session.userId, target.id));
 	});
 
-	return { promoted: true };
+	return { promoted: true, created: false };
 }
 
 function sqlExcluded(column: string) {

@@ -11,6 +11,7 @@ import { errorHandler } from "./lib/error-plugin";
 import { invalidateAll } from "./lib/session-cache";
 import { type ObjectStorage, requireObjectStorage } from "./lib/storage";
 import type { TokenVerifier } from "./lib/token-verifier";
+import { adminAccountRoutes } from "./modules/admin/accounts";
 import { adminAuditRoutes } from "./modules/admin/audit";
 import { adminRoleRoutes } from "./modules/admin/roles";
 import { analyticsRoutes } from "./modules/analytics/routes";
@@ -148,6 +149,7 @@ export function createApp(options: AppOptions = {}) {
 			.use(profileRoutes())
 			.use(adminRoleRoutes())
 			.use(adminAuditRoutes())
+			.use(adminAccountRoutes())
 			.use(designerContentRoutes(getStorage))
 			.use(adminContentRoutes(getStorage))
 			.use(feedRoutes())

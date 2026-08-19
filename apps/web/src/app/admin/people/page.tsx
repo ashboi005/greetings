@@ -16,6 +16,7 @@ import {
 } from "@/components/panel";
 import {
 	api,
+	type CreatedAccount,
 	type DirectoryUser,
 	errorMessage,
 	type RoleInvite,
@@ -45,14 +46,238 @@ function People() {
 	return (
 		<>
 			<PageHeader
-				description="Roles are never self-assigned. Every change here is recorded, and it signs the person out so the new role takes effect on their next request rather than whenever their session happens to expire."
+				description="Panel accounts are created here — there is no sign-up. Every change is recorded, and it signs the person out so a new role or password takes effect on their next request rather than whenever their session happens to expire."
 				title="People"
 			/>
+			<CreateAccountForm onCreated={bump} />
 			<GrantForm onGranted={bump} />
 			<Invites key={`invites-${refreshKey}`} onChange={bump} />
 			<Directory key={`directory-${refreshKey}`} />
 		</>
 	);
+}
+
+/**
+ * Creating a panel account.
+ *
+ * The password is shown back once, because nothing here can email it. Whoever
+ * creates the account has to pass it on themselves, so it has to be visible at
+ * least once — and only once, since there is no reason to keep it on screen.
+ */
+function CreateAccountForm({ onCreated }: { onCreated: () => void }) {
+	const [email, setEmail] = useState("");
+	const [name, setName] = useState("");
+	const [role, setRole] = useState<UserRole>("designer");
+	const [password, setPassword] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [handover, setHandover] = useState<{
+		email: string;
+		password: string;
+	} | null>(null);
+
+	const suggest = () => setPassword(suggestPassword());
+
+	const create = async (event: React.FormEvent) => {
+		event.preventDefault();
+		setBusy(true);
+		setError(null);
+		try {
+			await api<CreatedAccount>("/v1/admin/accounts", {
+				method: "POST",
+				body: { email: email.trim(), name: name.trim(), role, password },
+			});
+			setHandover({ email: email.trim(), password });
+			setEmail("");
+			setName("");
+			setPassword("");
+			onCreated();
+		} catch (cause) {
+			setError(errorMessage(cause));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<section className="mb-8 border p-4">
+			<h2 className="mb-3 font-medium text-sm">Create a panel account</h2>
+			<ErrorNote message={error} />
+
+			{handover ? (
+				<div className="mb-4 border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm">
+					<p className="font-medium">Account created — pass these on now.</p>
+					<p className="mt-1 break-all font-mono text-xs">
+						{handover.email} / {handover.password}
+					</p>
+					<p className="mt-1 text-muted-foreground text-xs">
+						This is the only time the password is shown. If it is lost, set a
+						new one from the directory below.
+					</p>
+					<Button
+						className="mt-2"
+						onClick={() => setHandover(null)}
+						size="xs"
+						variant="outline"
+					>
+						Done
+					</Button>
+				</div>
+			) : null}
+
+			<form className="grid gap-3 sm:grid-cols-2" onSubmit={create}>
+				<Field label="Email">
+					<Input
+						onChange={(event) => setEmail(event.target.value)}
+						placeholder="priya@example.com"
+						required
+						type="email"
+						value={email}
+					/>
+				</Field>
+				<Field label="Name">
+					<Input
+						maxLength={80}
+						onChange={(event) => setName(event.target.value)}
+						placeholder="Priya Sharma"
+						required
+						value={name}
+					/>
+				</Field>
+				<Field label="Role">
+					<select
+						className="h-8 w-full border bg-background px-2 text-sm"
+						onChange={(event) => setRole(event.target.value as UserRole)}
+						value={role}
+					>
+						{ROLES.map((option) => (
+							<option key={option.value} value={option.value}>
+								{option.label}
+							</option>
+						))}
+					</select>
+				</Field>
+				<Field
+					hint="At least 12 characters. Generate one rather than inventing it."
+					label="Password"
+				>
+					<div className="flex gap-2">
+						<Input
+							minLength={12}
+							onChange={(event) => setPassword(event.target.value)}
+							required
+							value={password}
+						/>
+						<Button onClick={suggest} type="button" variant="outline">
+							Generate
+						</Button>
+					</div>
+				</Field>
+				<div className="sm:col-span-2">
+					<Button
+						disabled={
+							busy || !email.trim() || !name.trim() || password.length < 12
+						}
+						type="submit"
+					>
+						{busy ? "Creating…" : "Create account"}
+					</Button>
+				</div>
+			</form>
+		</section>
+	);
+}
+
+/**
+ * Setting someone's password for them.
+ *
+ * This stands in for a self-service reset, which is impossible without an email
+ * transport. Accounts that sign in another way — a mobile user through Firebase
+ * — have no password to replace, and the server says so rather than pretending.
+ */
+function ResetPassword({ person }: { person: DirectoryUser }) {
+	const [busy, setBusy] = useState(false);
+	const [issued, setIssued] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
+
+	const reset = async () => {
+		const next = suggestPassword();
+		if (
+			!window.confirm(
+				`Set a new password for ${person.email}? This signs them out everywhere.`,
+			)
+		) {
+			return;
+		}
+
+		setBusy(true);
+		setError(null);
+		try {
+			await api(`/v1/admin/accounts/${person.id}/password`, {
+				method: "POST",
+				body: { password: next },
+			});
+			setIssued(next);
+		} catch (cause) {
+			setError(errorMessage(cause));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	if (issued) {
+		return (
+			<div className="text-right">
+				<div className="break-all font-mono text-xs">{issued}</div>
+				<button
+					className="text-muted-foreground text-xs underline"
+					onClick={() => setIssued(null)}
+					type="button"
+				>
+					hide
+				</button>
+			</div>
+		);
+	}
+
+	return (
+		<div className="text-right">
+			<Button disabled={busy} onClick={reset} size="xs" variant="ghost">
+				{busy ? "…" : "Reset password"}
+			</Button>
+			{error ? <div className="text-destructive text-xs">{error}</div> : null}
+		</div>
+	);
+}
+
+/**
+ * A passphrase from the browser's CSPRNG.
+ *
+ * Words rather than symbol soup: this gets read aloud or typed from a note, and
+ * a password someone mistypes twice gets replaced with a weak one they can
+ * remember.
+ */
+function suggestPassword(): string {
+	const words = [
+		"harbour",
+		"lantern",
+		"meadow",
+		"cobalt",
+		"thistle",
+		"marble",
+		"juniper",
+		"saffron",
+		"quarry",
+		"willow",
+		"cinder",
+		"pelican",
+	];
+	const picks = Array.from(
+		crypto.getRandomValues(new Uint32Array(4)),
+		(n) => words[n % words.length],
+	);
+	const digits = crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
+	return `${picks.join("-")}-${digits % 1000}`;
 }
 
 function GrantForm({ onGranted }: { onGranted: () => void }) {

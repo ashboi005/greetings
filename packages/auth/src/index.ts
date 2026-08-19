@@ -14,9 +14,17 @@ import { bearer } from "better-auth/plugins";
  *     ID token for a session here (Better Auth has no Firebase provider).
  *   - Designers, admins and super admins sign in on the web with Google.
  *
- * Email and password is deliberately off. The product has no password flow, and
- * leaving it enabled would expose a second, weaker route into privileged
- * accounts.
+ * Email and password is on, for the panels only, and public sign-up is off.
+ *
+ * That combination is the whole design. Panel users are staff — a few dozen
+ * designers and admins — and they are created by a super admin, never by
+ * self-registration. Google sign-in would mean registering and publishing an
+ * OAuth consent screen, and every account outside it would have to be added by
+ * hand while the screen sits in testing.
+ *
+ * Mobile end users are a different population and keep Firebase, which is there
+ * for phone OTP: self-hosting that means an SMS provider, delivery retries,
+ * expiry and fraud handling, none of which is worth owning.
  */
 export function createAuth() {
 	const db = createDb();
@@ -37,7 +45,20 @@ export function createAuth() {
 			"http://localhost:8081",
 		],
 		emailAndPassword: {
-			enabled: false,
+			enabled: true,
+			// The security boundary. With sign-up disabled there is no public route
+			// to an account at all: /api/auth/sign-up/email is refused, and the
+			// only way one exists is a super admin creating it. Leaving this on
+			// would let anyone mint themselves a `user` account on the panels.
+			disableSignUp: true,
+			// Staff accounts handed out by an administrator, so this is a floor on
+			// what an administrator may choose, not a hurdle for a member of the
+			// public inventing a password.
+			minPasswordLength: 12,
+			// Nothing can send email, so there is no verification link to follow.
+			// An account exists because a super admin created it, which is a
+			// stronger statement than a clicked link anyway.
+			requireEmailVerification: false,
 		},
 		socialProviders: googleConfigured
 			? {

@@ -7,6 +7,7 @@
  *   bun run jobs rollup 2026-08-01    # recompute one date
  *   bun run jobs rollup 2026-08-01 2026-08-07
  *   bun run jobs scores               # recompute feed ranking scores
+ *   bun run jobs create-admin         # the first super admin, with a password
  *   bun run jobs cleanup              # orphan drafts and expired keys
  *
  * `schedule` is the one a deployment runs; the rest are the same work available
@@ -16,8 +17,13 @@
  * Every job is idempotent, so a retry after a failure is always safe.
  */
 
+import { createPanelAccount } from "@greetings/auth/accounts";
+import { db } from "@greetings/db";
 import { refreshFeedScores } from "@greetings/db/feed-score";
+import { roleChangeLog, user as userTable } from "@greetings/db/schema";
+import { seedSuperAdmin } from "@greetings/db/seed/index";
 import { env } from "@greetings/env/server";
+import { eq } from "drizzle-orm";
 import { requireObjectStorage } from "../lib/storage";
 import {
 	cleanupOrphanDrafts,
@@ -40,6 +46,77 @@ function optionalStorage() {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Creates the first panel account, or promotes an existing one.
+ *
+ * Public sign-up is disabled and only a super admin can create panel accounts,
+ * which leaves the first one with nobody to create it. This is the way in.
+ *
+ * It lives here rather than in the database seed because creating a password
+ * account needs Better Auth's hasher — and packages/auth already depends on
+ * packages/db, so the seed reaching back into auth would be a cycle. apps/server
+ * depends on both, so this is where the two can meet.
+ */
+async function runCreateAdmin(): Promise<void> {
+	const email = env.SUPER_ADMIN_EMAIL;
+	if (!email) {
+		console.error("SUPER_ADMIN_EMAIL is not set.");
+		process.exit(1);
+	}
+
+	const [existing] = await db
+		.select({ id: userTable.id, role: userTable.role })
+		.from(userTable)
+		.where(eq(userTable.email, email.trim().toLowerCase()))
+		.limit(1);
+
+	if (existing) {
+		// Already here — promote rather than refuse, so this command is safe to
+		// re-run and does the obvious thing for an account made another way.
+		const result = await seedSuperAdmin(email);
+		console.log(
+			result.promoted
+				? `Promoted ${email} to super_admin.`
+				: `Unchanged: ${result.reason}`,
+		);
+		return;
+	}
+
+	if (!env.SUPER_ADMIN_PASSWORD) {
+		console.error(
+			`No account for ${email}. Set SUPER_ADMIN_PASSWORD (12+ characters) to create one.`,
+		);
+		process.exit(1);
+	}
+
+	const created = await createPanelAccount({
+		email,
+		name: "Super admin",
+		password: env.SUPER_ADMIN_PASSWORD,
+		role: "super_admin",
+	});
+
+	if (!created) {
+		console.error("That email was taken while this ran. Re-run to promote it.");
+		process.exit(1);
+	}
+
+	await db.insert(roleChangeLog).values({
+		id: crypto.randomUUID(),
+		actorId: null,
+		targetUserId: created.userId,
+		fromRole: "user",
+		toRole: "super_admin",
+		reason: "Bootstrap super admin (create-admin job)",
+		createdAt: new Date(),
+	});
+
+	console.log(
+		`Created ${email} as super_admin. Sign in, change the password from the ` +
+			"panel, then remove SUPER_ADMIN_PASSWORD from the environment.",
+	);
 }
 
 async function runScores(): Promise<string> {
@@ -110,6 +187,9 @@ switch (command) {
 	case "scores":
 		await runScores();
 		break;
+	case "create-admin":
+		await runCreateAdmin();
+		break;
 	case "nightly":
 		// Locked and recorded even when run by hand, so a manual run cannot
 		// collide with the scheduled one and shows up in the same history.
@@ -128,7 +208,7 @@ switch (command) {
 	}
 	default:
 		console.error(
-			`Unknown job "${command ?? ""}". Expected: schedule, nightly, rollup, scores, cleanup.`,
+			`Unknown job "${command ?? ""}". Expected: schedule, nightly, rollup, scores, cleanup, create-admin.`,
 		);
 		process.exit(1);
 }

@@ -276,6 +276,12 @@ export interface RoleChange {
 	targetEmail: string;
 }
 
+export interface CreatedAccount {
+	userId: string;
+	email: string;
+	role: UserRole;
+}
+
 export interface RoleInvite {
 	id: string;
 	email: string | null;

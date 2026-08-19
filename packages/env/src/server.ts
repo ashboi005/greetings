@@ -23,8 +23,20 @@ export const env = createEnv({
 		GOOGLE_CLIENT_ID: z.string().min(1).optional(),
 		GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
 
-		// Email granted super_admin by `bun run seed:super-admin`.
+		// Email granted super_admin by `bun run db:seed`.
 		SUPER_ADMIN_EMAIL: z.email().optional(),
+
+		/**
+		 * Password for the bootstrap super admin, if the account does not exist.
+		 *
+		 * Only used on a database with no super admin yet: it is how the very
+		 * first panel account comes into being, since public sign-up is disabled
+		 * and there is nobody to create it. Set it for the first seed, then
+		 * change the password from inside the panel and remove it from the
+		 * environment — a long-lived password in a deployment config is a
+		 * credential sitting somewhere it does not need to be.
+		 */
+		SUPER_ADMIN_PASSWORD: z.string().min(12).optional(),
 
 		// --- Cloudflare R2 (spec §6) ---
 		// Optional as a group, for the same reason as the auth providers: the
