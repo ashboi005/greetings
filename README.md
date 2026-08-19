@@ -103,6 +103,39 @@ it safe to run alongside the container:
 several instances racing the same migration, so it is deliberately a separate
 step — but it is a step, and forgetting it is how a deploy half-works.
 
+### Deploying with Coolify
+
+Both apps live in one repository, so each Coolify application needs to be told
+which Dockerfile to use — and the field wants the path to the *file*, not the
+folder that contains it.
+
+| Application | Dockerfile Location | Base Directory | Port |
+|---|---|---|---|
+| API | `/apps/server/Dockerfile` | `/` | 3000 |
+| Panels | `/apps/web/Dockerfile` | `/` | 3001 |
+
+**Base Directory stays at the repository root** for both. The images run
+`bun install --frozen-lockfile` against the workspace, so they need the root
+`package.json`, `bun.lock` and `packages/*` in the build context. Narrowing the
+context to `apps/server` gets further and then fails on the lockfile.
+
+**`NEXT_PUBLIC_SERVER_URL` must be a build-time variable** for the panels, not
+just a runtime one. Next.js bakes `NEXT_PUBLIC_*` into the browser bundle when
+it builds, so a value supplied only at runtime arrives too late — the build
+fails while prerendering, which is the better of the two possible outcomes.
+
+**Set `TRUST_PROXY_HEADERS=true` on the API.** Coolify puts Traefik in front of
+it, so without this every request appears to come from the proxy and the rate
+limiter treats the whole user base as one client.
+
+Health checks: `/health` for liveness, `/health/ready` if you want the probe to
+verify the database too — it returns 503 when Postgres is unreachable, which
+stops a broken deploy rolling forward.
+
+A Dockerfile deployment gives you the API only. The `jobs` service from
+`docker-compose.yml` is not included, so schedule it separately — see
+[Scheduled work](#scheduled-work).
+
 ### Configuration that matters in production
 
 `apps/server/.env.example` documents everything. Three are easy to get wrong:
