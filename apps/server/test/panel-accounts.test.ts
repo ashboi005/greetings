@@ -57,20 +57,17 @@ async function signIn(email: string, password: string) {
 
 /** Calls the API with a browser-style cookie session. */
 function withCookie(path: string, cookie: string) {
-	return (
-		app
-			.handle(
-				new Request(`http://localhost${path}`, {
-					headers: { cookie, origin: "http://localhost:3001" },
-				}),
-			)
+	return app
+		.handle(
+			new Request(`http://localhost${path}`, {
+				headers: { cookie, origin: "http://localhost:3001" },
+			}),
+		)
+		.then(async (res) => ({
+			status: res.status,
 			// biome-ignore lint/suspicious/noExplicitAny: test ergonomics, as elsewhere
-			.then(async (res) => ({
-				status: res.status,
-				// biome-ignore lint/suspicious/noExplicitAny: test ergonomics, as elsewhere
-				body: (await res.json()) as any,
-			}))
-	);
+			body: (await res.json()) as any,
+		}));
 }
 
 beforeEach(async () => {
@@ -166,9 +163,9 @@ describe("a super admin creating panel accounts", () => {
 					body: JSON.stringify(body),
 				}),
 			)
-			// biome-ignore lint/suspicious/noExplicitAny: test ergonomics, as elsewhere
 			.then(async (res) => ({
 				status: res.status,
+				// biome-ignore lint/suspicious/noExplicitAny: test ergonomics, as elsewhere
 				body: (await res.json()) as any,
 			}));
 

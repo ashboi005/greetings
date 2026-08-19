@@ -1,5 +1,6 @@
 import { relations, sql } from "drizzle-orm";
 import {
+	boolean,
 	index,
 	pgTable,
 	primaryKey,
@@ -25,17 +26,32 @@ const unconsumed = sql`consumed_at is null and revoked_at is null`;
  * (§7) and are stamped onto every download event for analytics (§4.5).
  */
 
-/** Indian states and union territories, keyed by ISO 3166-2:IN code. */
+/**
+ * Indian states and union territories, keyed by ISO 3166-2:IN code.
+ *
+ * Retired via `isActive` rather than deleted. A region code is stamped onto
+ * every `download_events` row and held by `user_profiles`, so a delete would
+ * either fail on a foreign key or destroy historical attribution. Retiring one
+ * hides it from the pickers while every past download stays correctly
+ * attributed, and a user already in that region keeps working.
+ */
 export const regions = pgTable("regions", {
 	code: text("code").primaryKey(),
 	name: text("name").notNull(),
+	isActive: boolean("is_active").default(true).notNull(),
 });
 
-/** Languages content can be authored in, keyed by ISO 639-1 where one exists. */
+/**
+ * Languages content can be authored in, keyed by ISO 639-1 where one exists.
+ *
+ * Retired rather than deleted for the same reason as regions: `content`
+ * references a primary language and `user_languages` holds per-user preferences.
+ */
 export const languages = pgTable("languages", {
 	code: text("code").primaryKey(),
 	name: text("name").notNull(),
 	nativeName: text("native_name").notNull(),
+	isActive: boolean("is_active").default(true).notNull(),
 });
 
 export const userProfiles = pgTable("user_profiles", {

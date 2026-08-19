@@ -515,6 +515,12 @@ function Directory() {
 										? `${person.contentCount} items`
 										: person.regionCode || "—"}
 								</div>
+								{/* Only for panel roles. A mobile reader signs in through
+								    Firebase and has no password to replace, so offering the
+								    button would be offering a guaranteed error. */}
+								{person.role === "user" ? null : (
+									<ResetPassword person={person} />
+								)}
 							</div>
 						</Row>
 					))}

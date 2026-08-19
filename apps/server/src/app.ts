@@ -13,6 +13,7 @@ import { type ObjectStorage, requireObjectStorage } from "./lib/storage";
 import type { TokenVerifier } from "./lib/token-verifier";
 import { adminAccountRoutes } from "./modules/admin/accounts";
 import { adminAuditRoutes } from "./modules/admin/audit";
+import { adminReferenceRoutes } from "./modules/admin/reference";
 import { adminRoleRoutes } from "./modules/admin/roles";
 import { analyticsRoutes } from "./modules/analytics/routes";
 import { authRoutes } from "./modules/auth/routes";
@@ -150,6 +151,7 @@ export function createApp(options: AppOptions = {}) {
 			.use(adminRoleRoutes())
 			.use(adminAuditRoutes())
 			.use(adminAccountRoutes())
+			.use(adminReferenceRoutes())
 			.use(designerContentRoutes(getStorage))
 			.use(adminContentRoutes(getStorage))
 			.use(feedRoutes())

@@ -81,26 +81,44 @@ export const tooManyRequests = (message = "Too many requests") =>
 	new AppError("RATE_LIMITED", message);
 
 /**
- * Detects a Postgres unique violation (SQLSTATE 23505).
+ * Reads the SQLSTATE off a thrown database error, or null if it is not one.
  *
  * Drizzle wraps driver errors, so the pg error carrying `code` sits somewhere
  * down the `cause` chain rather than on the thrown object. Code that maps a
- * constraint violation to 409 must walk the chain, or the violation escapes as
- * a 500.
+ * constraint violation to a 4xx must walk the chain, or the violation escapes
+ * as a 500.
  */
-export function isUniqueViolation(cause: unknown): boolean {
+function pgErrorCode(cause: unknown): string | null {
 	let current = cause;
 
 	for (let depth = 0; current && depth < 5; depth++) {
-		if (
-			typeof current === "object" &&
-			"code" in current &&
-			(current as { code?: string }).code === "23505"
-		) {
-			return true;
+		if (typeof current === "object" && "code" in current) {
+			const code = (current as { code?: unknown }).code;
+			// Only a SQLSTATE shape counts, and anything else keeps walking. Node
+			// and Elysia both put their own string `code` on errors, so returning
+			// the first one found would mask a real violation sitting deeper in the
+			// chain — which is the bug this function exists to avoid.
+			if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) return code;
 		}
 		current = (current as { cause?: unknown }).cause;
 	}
 
-	return false;
+	return null;
+}
+
+/** Detects a Postgres unique violation (SQLSTATE 23505). */
+export function isUniqueViolation(cause: unknown): boolean {
+	return pgErrorCode(cause) === "23505";
+}
+
+/**
+ * Detects a Postgres foreign key violation (SQLSTATE 23503).
+ *
+ * This is how "you cannot delete this because something still points at it"
+ * arrives. Relying on the constraint rather than a prior count is what makes
+ * the check race-free: a row referenced between the count and the delete would
+ * slip past any application-level guard.
+ */
+export function isForeignKeyViolation(cause: unknown): boolean {
+	return pgErrorCode(cause) === "23503";
 }

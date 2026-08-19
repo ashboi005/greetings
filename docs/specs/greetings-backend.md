@@ -120,8 +120,12 @@ signed up yet. The grant is consumed automatically at that person's first sign-i
 
 - `user_profiles` — userId (PK/FK), phone?, displayName, regionCode → `regions`, onboardedAt
 - `user_languages` — userId, languageCode (composite PK)
-- `regions` — code (`IN-MH`), name — seeded with Indian states and union territories
-- `languages` — code (`hi`, `mr`, `ta`), name, nativeName
+- `regions` — code (`IN-MH`), name, **isActive** — seeded with Indian states and union territories
+- `languages` — code (`hi`, `mr`, `ta`), name, nativeName, **isActive**
+
+`isActive` exists because these rows cannot be deleted: a region code is stamped onto every
+`download_events` row and held by `user_profiles`, and a language is referenced by `content` and
+`user_languages`. See §4.6.
 
 ### 4.3 Content (`schema/content.ts`)
 
@@ -143,6 +147,10 @@ signed up yet. The grant is consumed automatically at that person's first sign-i
     user per item
 - `moderation_actions` — id, actorId, contentId, action (`approve|reject|remove|restore`), reason?, createdAt
 - `role_change_log` — id, actorId, targetUserId, fromRole, toRole, createdAt
+- `reference_change_log` — id, actorId, entity (`tag|language|region`), entityKey,
+  action (`create|update|activate|deactivate|delete`), before (jsonb), after (jsonb), createdAt
+  - the three entities have different shapes, so the row is stored whole as JSONB rather than as
+    named columns a log nobody updates would have to grow. See §4.6.
 
 ### 4.5 Analytics (`schema/analytics.ts`)
 
@@ -155,6 +163,72 @@ signed up yet. The grant is consumed automatically at that person's first sign-i
 `designerId` and `regionCode` are denormalized onto `download_events` deliberately. It makes every
 analytics query a single-table scan, and it freezes region attribution at event time — if a user
 later moves states, history stays correct.
+
+### 4.6 Taxonomy management
+
+Tags, languages and regions were originally seed-only: adding a festival meant editing
+`packages/db/src/seed/tags.ts` and deploying. That is the wrong shape for the one part of the data
+model that is genuinely editorial — the tag list is how designers describe content and how readers
+filter it, and it needs to move when the calendar does.
+
+Admins and super admins manage all three from the panel. Designers cannot: they consume the
+taxonomy, they do not define it.
+
+| Endpoint | Method | Notes |
+|---|---|---|
+| `/v1/admin/reference/tags` | GET | All tags including retired, with `usageCount` |
+| `/v1/admin/reference/tags` | POST | `{ slug, label, category }` |
+| `/v1/admin/reference/tags/:id` | PATCH | Any of slug, label, category, isActive |
+| `/v1/admin/reference/tags/:id` | DELETE | 409 once any content carries it |
+| `/v1/admin/reference/languages` | GET/POST | `{ code, name, nativeName }` |
+| `/v1/admin/reference/languages/:code` | PATCH/DELETE | Code is immutable |
+| `/v1/admin/reference/regions` | GET/POST | `{ code, name }` |
+| `/v1/admin/reference/regions/:code` | PATCH/DELETE | Code is immutable |
+| `/v1/admin/reference/log` | GET | Change history, filterable by entity and key |
+
+Four properties, each of which exists because the obvious alternative is wrong:
+
+**Retire, do not delete.** `isActive: false` hides a row from the public endpoints and the designer
+pickers while leaving every past post and every analytics row intact. Delete is permitted only while
+nothing references the row, which makes it useful for correcting a typo made minutes ago and
+useless for anything else. The panel only renders a Delete button when the count is zero, because a
+button that always returns 409 teaches people to ignore error messages.
+
+**Tags need an explicit usage check; languages and regions do not.** `content_tags.tag_id` is
+`ON DELETE CASCADE`, so Postgres would happily accept a tag delete and silently strip that tag from
+every post carrying it. The count inside the locked transaction is what makes refusal reliable.
+Languages and regions are referenced by restricting foreign keys, so the constraint refuses on its
+own and the count only buys a better message. `region` deliberately does not count
+`download_events` — that is the largest table in the database, and the foreign key catches it
+anyway.
+
+**Codes are immutable, labels are not.** A region code lives in analytics history; changing it would
+rewrite events that already happened. A language code is referenced by content and reader
+preferences. Renaming the human-readable label is always safe; changing the identifier never is.
+
+**Every change is logged.** `reference_change_log` records actor, entity, action and the whole row
+before and after as JSONB. Renaming a tag changes what thousands of posts appear to be about, which
+is exactly the kind of thing that needs an answer to "who did this". The log entry and the change
+share a transaction, so there is no entry for a change that rolled back. Activation and retirement
+get their own verbs rather than hiding inside a generic `update`, because those are what an auditor
+scans for.
+
+Mutations call `clearReferenceCache()`. The public reference endpoints cache for 60 seconds in
+process (§12.6); without invalidation an admin would save a tag and watch nothing happen, which
+reads as a broken save rather than a cache.
+
+**Tag categories are not editable.** `tags.category` is a Postgres enum of five values
+(`festival|language|region|theme|occasion`), so a sixth is a migration — one `ALTER TYPE ... ADD
+VALUE` plus the matching literal in `packages/db/src/schema/content.ts` and
+`apps/web/src/lib/api.ts`. This is deliberate: categories are the *shape* of the taxonomy and change
+perhaps twice in a product's life, while tags are its *content* and change monthly. Keeping the
+enum keeps the category type-checked across the feed, search and designer paths; making it a runtime
+table would trade that for flexibility nobody has asked for. Tags within the five categories are
+unlimited.
+
+One behaviour worth knowing: a designer re-saving tags on content that carries a retired tag will
+drop it, because the picker only offers active tags and `PUT /v1/designer/content/:id/tags` rejects
+inactive ones. Already-published content keeps its retired tags until someone edits it.
 
 ---
 
@@ -592,6 +666,7 @@ separate logging layer that could be forgotten:
 | Every role change, from and to | `role_change_log` | `applyRoleChange`, and invite consumption |
 | Invites offered and withdrawn | `role_invites`, incl. `revoked_at`/`revoked_by` | the roles routes |
 | Who downloaded what, when, from where | `download_events` | the download route |
+| Every taxonomy edit, before and after | `reference_change_log` | the reference routes, in the same transaction |
 
 Two rules the design depends on:
 
@@ -784,6 +859,45 @@ value broke everything that loads the environment — including `db:seed` — wh
 never passes through validation. A configuration mistake that breaks some
 commands and not others is worse than one that breaks all of them. The length is
 checked in the job that uses it.
+
+---
+
+## 14j. Constraints discovered while building taxonomy management
+
+**`t.Optional(t.UnionEnum([...]))` bit again, and it corrupts data on a PATCH.**
+`apps/server/src/lib/schema.ts` already documented that an absent value resolves
+to the *first* member of the list rather than `undefined`, and the trap was still
+walked into twice in one module. On a partial update it is worse than a bad
+filter: `PATCH /tags/:id` with only a new label arrived carrying
+`category: "festival"`, and `body.category ?? before.category` therefore
+recategorised the tag. Every non-festival tag in the taxonomy was one rename away
+from silently becoming a festival. Use `optionalEnum()` for any optional enum, in
+a query *or* a body. There is a test that fails with `"festival"` if this
+regresses.
+
+**`ON DELETE CASCADE` turns a refused delete into a silent one.** The natural way
+to protect reference data is to let the foreign key refuse the delete, which is
+race-free and needs no application logic. That works for languages and regions.
+It does not work for tags: `content_tags.tag_id` cascades, so Postgres accepts
+the delete and strips the tag from every post that had it. Deleting reference
+data is only safe where the referencing constraint actually restricts — check the
+`onDelete` on every table pointing at a row before trusting the database to say
+no.
+
+**A read cache makes an editor look broken.** Reference data is cached 60 seconds
+in process and sent with `Cache-Control: max-age=300` (§12.6). Both are right for
+readers and wrong for an editor: without `clearReferenceCache()` on write, an
+admin saves a tag and the public list does not change for a minute. The admin
+endpoints therefore serve uncached, unfiltered data — including retired rows,
+which an editor has to see in order to restore one — and every mutation drops the
+cache. This is single-instance reasoning: a second API container would keep its
+own copy for up to a minute. Acceptable at this scale, and the reason to reach
+for a shared cache if that changes.
+
+**`isActive` had to be added to `regions` and `languages`.** Neither had it,
+because seed-only data never needed retiring. Both new columns take a constant
+default, so the migration is metadata-only on Postgres 11+ and does not rewrite
+the tables.
 
 ---
 

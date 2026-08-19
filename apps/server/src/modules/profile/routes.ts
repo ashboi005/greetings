@@ -36,6 +36,9 @@ export function profileRoutes() {
 					db
 						.select({ code: regions.code, name: regions.name })
 						.from(regions)
+						// Retired regions stay in the table because history references
+						// them, but they must not appear in an onboarding picker.
+						.where(eq(regions.isActive, true))
 						.orderBy(asc(regions.name)),
 				);
 			},
@@ -59,6 +62,7 @@ export function profileRoutes() {
 							nativeName: languages.nativeName,
 						})
 						.from(languages)
+						.where(eq(languages.isActive, true))
 						.orderBy(asc(languages.name)),
 				);
 			},

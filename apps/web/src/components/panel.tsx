@@ -208,6 +208,9 @@ function linksFor(role: UserRole | undefined): NavLink[] {
 		links.push(
 			{ href: "/moderation" as Route, label: "Review queue" },
 			{ href: "/moderation/reports" as Route, label: "Reports" },
+			// Curating tags is a content job, so admins get it too rather than
+			// having to ask a super admin every time a festival comes round.
+			{ href: "/admin/taxonomy" as Route, label: "Taxonomy" },
 		);
 	}
 

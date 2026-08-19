@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
 	index,
+	jsonb,
 	pgEnum,
 	pgTable,
 	text,
@@ -169,6 +170,80 @@ export const moderationActions = pgTable(
 		// The platform-wide audit feed, newest first.
 		index("moderation_actions_created_idx").on(table.createdAt),
 	],
+);
+
+/** What kind of reference row a taxonomy edit touched. */
+export const referenceEntityEnum = pgEnum("reference_entity", [
+	"tag",
+	"language",
+	"region",
+]);
+
+export const REFERENCE_ENTITIES = referenceEntityEnum.enumValues;
+export type ReferenceEntity = (typeof REFERENCE_ENTITIES)[number];
+
+export const referenceActionEnum = pgEnum("reference_action", [
+	"create",
+	"update",
+	"activate",
+	"deactivate",
+	"delete",
+]);
+
+export const REFERENCE_ACTIONS = referenceActionEnum.enumValues;
+export type ReferenceAction = (typeof REFERENCE_ACTIONS)[number];
+
+/**
+ * Audit trail for taxonomy edits (spec §4.4).
+ *
+ * Tags, languages and regions used to change only when someone ran a seed
+ * script, so a change was implicitly attributable to a deploy. Now admins edit
+ * them from the panel, which makes "who renamed this tag, and to what" a real
+ * question — the same question the content timeline already answers for posts.
+ *
+ * `before` and `after` hold the whole row as JSON rather than named columns.
+ * The three entities have different shapes, and a log that had to grow a column
+ * every time one of them did would be a log nobody updates.
+ */
+export const referenceChangeLog = pgTable(
+	"reference_change_log",
+	{
+		id: text("id").primaryKey(),
+		// Null for changes made by a seed script, which has no signed-in actor.
+		actorId: text("actor_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
+		entity: referenceEntityEnum("entity").notNull(),
+		/** Primary key of the touched row: a tag id, or a language/region code. */
+		entityKey: text("entity_key").notNull(),
+		action: referenceActionEnum("action").notNull(),
+		/** Null on create. */
+		before: jsonb("before"),
+		/** Null on delete. */
+		after: jsonb("after"),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [
+		// "Show me everything that happened to this tag."
+		index("reference_change_log_entity_idx").on(
+			table.entity,
+			table.entityKey,
+			table.createdAt,
+		),
+		// The newest-first feed the audit page reads.
+		index("reference_change_log_created_idx").on(table.createdAt),
+		index("reference_change_log_actor_idx").on(table.actorId),
+	],
+);
+
+export const referenceChangeLogRelations = relations(
+	referenceChangeLog,
+	({ one }) => ({
+		actor: one(user, {
+			fields: [referenceChangeLog.actorId],
+			references: [user.id],
+		}),
+	}),
 );
 
 export const moderationActionRelations = relations(

@@ -40,8 +40,22 @@ bun run db:seed          # regions, languages, and the bootstrap super admin
 bun run dev:server
 ```
 
-`db:seed` is idempotent, so it is safe to re-run after any migration. To grant yourself super admin,
-sign in once with Google, set `SUPER_ADMIN_EMAIL` in `apps/server/.env`, then re-run it.
+`db:seed` writes reference data only — regions, languages and tags. It creates no users and no
+content, and it is idempotent, so it is safe to re-run after any migration. (`db:seed:demo` is the
+one that invents designers and posts; never point it at production.)
+
+The first super admin comes from a separate command, because public sign-up is disabled and only a
+super admin can create panel accounts — which leaves the first one with nobody to create it:
+
+```
+# in apps/server/.env: SUPER_ADMIN_EMAIL, and SUPER_ADMIN_PASSWORD (12+ characters)
+bun run --filter server jobs create-admin
+```
+
+It promotes the account if the email already exists, so it is safe to re-run. Sign in, change the
+password from `/admin/people`, then remove `SUPER_ADMIN_PASSWORD` from the environment — nothing
+else reads it, and a long-lived password in a deployment config is a credential sitting somewhere it
+does not need to be.
 
 ### Scheduled work
 
@@ -204,9 +218,13 @@ Web on [http://localhost:3001](http://localhost:3001), API on
 
 ## The web panels
 
-Three panels, one app, gated by role. Sign-in is Google only — the server has
-email and password switched off, because the product has no password flow and
-leaving one enabled would be a second, weaker route into an admin account.
+Three panels, one app, gated by role. Sign-in is email and password through
+Better Auth, with **public sign-up disabled**: a panel account exists only
+because a super admin created it from `/admin/people`. Google OAuth remains
+available and is registered only when `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET` are both set, so a deployment that does not want it does
+not have to register an app with Google. Mobile readers are a separate path
+entirely — Firebase phone OTP, never these screens.
 
 | Route | Who | What |
 |---|---|---|
@@ -217,7 +235,8 @@ leaving one enabled would be a second, weaker route into an admin account.
 | `/admin` | super admin | Platform totals, downloads per day, designers by reach |
 | `/admin/content` | super admin | Search every item in every status |
 | `/admin/content/[id]` | super admin | One item's whole history, every actor named |
-| `/admin/people` | super admin | Grant roles, withdraw invites, find anyone |
+| `/admin/people` | super admin | Create panel accounts, reset passwords, grant roles, withdraw invites |
+| `/admin/taxonomy` | admin, super admin | Add, rename, retire tags, languages and regions; change history |
 | `/admin/audit` | super admin | Every moderation decision and every role change |
 
 A super admin sees the moderation screens too — the product asks for one person

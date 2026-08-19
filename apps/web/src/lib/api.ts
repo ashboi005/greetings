@@ -147,6 +147,59 @@ export interface Tag {
 	category: string;
 }
 
+/**
+ * The five tag groupings.
+ *
+ * A closed list because the server column is a Postgres enum: adding a sixth is
+ * a migration, not a runtime edit. Kept here so the editor offers exactly what
+ * the API will accept rather than a free-text field that fails on submit.
+ */
+export const TAG_CATEGORIES = [
+	"festival",
+	"language",
+	"region",
+	"theme",
+	"occasion",
+] as const;
+
+export type TagCategory = (typeof TAG_CATEGORIES)[number];
+
+/** A tag as the taxonomy editor sees it: retired ones included, with usage. */
+export interface TaxonomyTag {
+	id: string;
+	slug: string;
+	label: string;
+	category: TagCategory;
+	isActive: boolean;
+	usageCount: number;
+}
+
+export interface TaxonomyLanguage {
+	code: string;
+	name: string;
+	nativeName: string;
+	isActive: boolean;
+	contentCount: number;
+}
+
+export interface TaxonomyRegion {
+	code: string;
+	name: string;
+	isActive: boolean;
+	contentCount: number;
+}
+
+export interface ReferenceChange {
+	id: string;
+	entity: "tag" | "language" | "region";
+	entityKey: string;
+	action: "create" | "update" | "activate" | "deactivate" | "delete";
+	before: Record<string, unknown> | null;
+	after: Record<string, unknown> | null;
+	createdAt: string;
+	actorId: string | null;
+}
+
 export interface DesignerContentSummary {
 	id: string;
 	title: string;
