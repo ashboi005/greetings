@@ -9,7 +9,7 @@
 
 import { eq, sql } from "drizzle-orm";
 import { db } from "../index";
-import { roleChangeLog, tags, user as userTable } from "../schema";
+import { roleChangeLog, session, tags, user as userTable } from "../schema";
 import { languages, regions } from "../schema/profile";
 import { LANGUAGE_SEED, REGION_SEED } from "./reference";
 import { TAG_SEED } from "./tags";
@@ -107,6 +107,13 @@ export async function seedSuperAdmin(
 			reason: "Bootstrap super admin (seed script)",
 			createdAt: new Date(),
 		});
+
+		// Authorisation reads the role out of the session, so a session issued
+		// before this promotion still says `user`. The role-assignment route
+		// revokes sessions for exactly this reason; the bootstrap path has to do
+		// the same or the first super admin signs in, runs the seed, and is still
+		// told there is nothing here for them.
+		await tx.delete(session).where(eq(session.userId, target.id));
 	});
 
 	return { promoted: true };

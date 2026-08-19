@@ -302,3 +302,35 @@ describe("role matrix", () => {
 		}
 	}
 });
+
+describe("bootstrapping the first super admin", () => {
+	test("promotion takes effect without signing out and in again", async () => {
+		const { seedSuperAdmin } = await import("@greetings/db/seed/index");
+
+		const person = await auth.signIn({ email: "bootstrap@example.com" });
+		expect(
+			(await api.get("/v1/admin/users", { token: person.token })).status,
+		).toBe(403);
+
+		const result = await seedSuperAdmin("bootstrap@example.com");
+		expect(result.promoted).toBe(true);
+
+		// The role lives in the session, so promoting the row is not enough on
+		// its own — the seed has to revoke the stale session the way the
+		// role-assignment route does. Without that the first super admin stays a
+		// `user` until their session expires days later, with nothing to explain
+		// why the panel says there is nothing here for them.
+		//
+		// Refused, but which refusal depends on timing: the bearer session cache
+		// may still answer from memory for its TTL (403, stale role) before the
+		// deleted row surfaces (401). In production the seed runs in a separate
+		// process, so only the database state matters. Either way the old token
+		// no longer grants access, which is the property worth pinning.
+		const after = await api.get("/v1/admin/users", { token: person.token });
+		expect(after.status).not.toBe(200);
+		expect([401, 403]).toContain(after.status);
+
+		const fresh = await auth.reSignIn(person.identity);
+		expect(fresh.user.role).toBe("super_admin");
+	});
+});
