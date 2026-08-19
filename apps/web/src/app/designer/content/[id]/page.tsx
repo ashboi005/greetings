@@ -161,14 +161,35 @@ function ImageSection({
 				},
 			);
 
-			const put = await fetch(presigned.uploadUrl, {
-				method: "PUT",
-				headers: { "content-type": file.type },
-				body: file,
-			});
+			// Two failure modes, and they need different messages. A rejected
+			// promise means the request never completed: the browser blocked it
+			// before it left, or it could not reach the host. The overwhelmingly
+			// common cause in a new deployment is a bucket with no CORS policy,
+			// which is invisible server-side — the URL was signed correctly and
+			// the refusal happens in the browser. Reporting "failed to fetch"
+			// sends whoever sees it looking in the wrong place.
+			let put: Response;
+			try {
+				put = await fetch(presigned.uploadUrl, {
+					method: "PUT",
+					headers: { "content-type": file.type },
+					body: file,
+				});
+			} catch {
+				throw new Error(
+					"The browser could not reach image storage. If this is a new " +
+						"deployment, the storage bucket is probably missing a CORS " +
+						"policy allowing PUT from this site. Otherwise, check your " +
+						"connection and try again.",
+				);
+			}
+			// A completed request that was refused: the signature expired, or the
+			// object does not match what was signed. Worth showing the status.
 			if (!put.ok) {
 				throw new Error(
-					`Upload to storage failed (${put.status}). Check your connection and try again.`,
+					`Image storage refused the upload (${put.status}). If you waited a ` +
+						"while before choosing the file, the upload link may have expired — " +
+						"try again.",
 				);
 			}
 
