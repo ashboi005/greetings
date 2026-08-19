@@ -65,7 +65,43 @@ function describe(connection: string): string {
 	}
 }
 
-const pool = new Pool({ connectionString: url, max: 1 });
+/**
+ * Timeouts, because the default is to wait forever.
+ *
+ * `ALTER TABLE ... ADD COLUMN` needs an ACCESS EXCLUSIVE lock, and a migration
+ * that cannot get one does not fail — it queues, silently, printing nothing but
+ * "Running...". Worse, a queued ACCESS EXCLUSIVE request blocks every *new*
+ * reader of that table behind it, so a migration waiting politely on one lock
+ * can stall the whole API.
+ *
+ * Measured for real: an abandoned run left a connection `idle in transaction`
+ * holding a half-created type, and the next run blocked on it indefinitely with
+ * no indication of why. `lock_timeout` turns that into an error naming the lock,
+ * in three seconds.
+ *
+ * `lock_timeout` deliberately short: waiting for a lock is a signal that
+ * something else holds it, and a person should decide what to do about that.
+ * `statement_timeout` generous, because building an index on a large table is
+ * slow work that genuinely should be allowed to finish.
+ */
+const pool = new Pool({
+	connectionString: url,
+	max: 1,
+	options: "-c lock_timeout=3s -c statement_timeout=600s",
+
+	// Keepalives, because a production database is usually reached through
+	// something — a proxy, a NAT, a tunnel — that drops a quiet TCP connection
+	// without telling either end. When that happens mid-migration the server sits
+	// in `idle in transaction` holding locks, and this process waits forever for a
+	// reply that can never arrive. The visible symptom is "Running..." and no
+	// progress, which reads as a slow migration rather than a dead socket.
+	//
+	// Measured: two consecutive runs died exactly this way, each leaving a
+	// half-finished transaction that blocked the next attempt.
+	keepAlive: true,
+	keepAliveInitialDelayMillis: 10_000,
+	connectionTimeoutMillis: 15_000,
+});
 
 try {
 	console.log(`Migrating ${describe(url)}`);
@@ -83,6 +119,35 @@ try {
 } catch (cause) {
 	console.error("\nMigration failed:");
 	console.error(cause instanceof Error ? cause.message : cause);
+
+	// 55P03 lock_not_available, 40P01 deadlock_detected. Both mean the schema
+	// change was fine and something else was in the way, which is a completely
+	// different problem from a broken migration — and the fix is never "edit the
+	// SQL". Naming the query that finds the holder saves the next person the
+	// twenty minutes it took to find it the first time.
+	const code =
+		typeof cause === "object" && cause && "code" in cause
+			? (cause as { code?: unknown }).code
+			: null;
+
+	if (code === "55P03" || code === "40P01") {
+		console.error(
+			"\nThis is a lock conflict, not a bad migration. Something else is\n" +
+				"holding the table — commonly an earlier run of this command that was\n" +
+				"interrupted and left a connection `idle in transaction`.\n\n" +
+				"Find it:\n" +
+				"  SELECT pid, state, (now() - xact_start)::text AS age,\n" +
+				"         left(query, 60) AS q\n" +
+				"  FROM pg_stat_activity\n" +
+				"  WHERE datname = current_database() AND state <> 'idle'\n" +
+				"  ORDER BY xact_start;\n\n" +
+				"Then, once you are sure it is abandoned:\n" +
+				"  SELECT pg_terminate_backend(<pid>);\n\n" +
+				"Terminating rolls its transaction back. Nothing this migration had\n" +
+				"done is committed, so re-running afterwards is safe.",
+		);
+	}
+
 	process.exitCode = 1;
 } finally {
 	await pool.end();
