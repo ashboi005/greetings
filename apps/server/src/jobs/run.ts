@@ -34,6 +34,9 @@ import { pruneJobRuns, runLocked, runSchedule } from "./schedule";
 
 const [command, ...args] = process.argv.slice(2);
 
+/** Matches `minPasswordLength` in packages/auth, so sign-in accepts what this sets. */
+const MIN_ADMIN_PASSWORD_LENGTH = 12;
+
 /** Storage, or null when this deployment has no R2 credentials. */
 function optionalStorage() {
 	try {
@@ -84,9 +87,21 @@ async function runCreateAdmin(): Promise<void> {
 		return;
 	}
 
-	if (!env.SUPER_ADMIN_PASSWORD) {
+	const password = env.SUPER_ADMIN_PASSWORD;
+
+	if (!password) {
 		console.error(
-			`No account for ${email}. Set SUPER_ADMIN_PASSWORD (12+ characters) to create one.`,
+			`No account for ${email}. Set SUPER_ADMIN_PASSWORD to create one.`,
+		);
+		process.exit(1);
+	}
+
+	// Checked here rather than in the env schema: this variable matters to this
+	// one command, so a bad value should fail this command with a message about
+	// passwords instead of stopping the API from booting.
+	if (password.length < MIN_ADMIN_PASSWORD_LENGTH) {
+		console.error(
+			`SUPER_ADMIN_PASSWORD must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters; got ${password.length}.`,
 		);
 		process.exit(1);
 	}
@@ -94,7 +109,7 @@ async function runCreateAdmin(): Promise<void> {
 	const created = await createPanelAccount({
 		email,
 		name: "Super admin",
-		password: env.SUPER_ADMIN_PASSWORD,
+		password,
 		role: "super_admin",
 	});
 

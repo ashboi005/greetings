@@ -35,8 +35,13 @@ export const env = createEnv({
 		 * change the password from inside the panel and remove it from the
 		 * environment — a long-lived password in a deployment config is a
 		 * credential sitting somewhere it does not need to be.
+		 *
+		 * Deliberately not length-validated here. This variable is read by one
+		 * job and by nothing the API serves, so a short value should fail that
+		 * job with a message about passwords — not stop the whole server booting,
+		 * which is what a `min(12)` at this layer did.
 		 */
-		SUPER_ADMIN_PASSWORD: z.string().min(12).optional(),
+		SUPER_ADMIN_PASSWORD: z.string().optional(),
 
 		// --- Cloudflare R2 (spec §6) ---
 		// Optional as a group, for the same reason as the auth providers: the
