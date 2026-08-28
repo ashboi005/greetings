@@ -39,9 +39,24 @@ export interface AppOptions {
 	tokenVerifier?: TokenVerifier;
 	/** Injected by tests so uploads never reach Cloudflare. */
 	objectStorage?: ObjectStorage;
+	/**
+	 * Public CDN origin for image URLs. Defaults to the environment.
+	 *
+	 * Injectable for the same reason as the two above: a route that reads the
+	 * environment directly cannot be tested against both configured and
+	 * unconfigured deployments in one suite, and image URLs are the field the
+	 * mobile app depends on most.
+	 */
+	publicBaseUrl?: string;
 }
 
 export function createApp(options: AppOptions = {}) {
+	// `in` rather than `??`, so passing `publicBaseUrl: undefined` explicitly
+	// means "this deployment has no CDN" instead of silently falling through to
+	// the environment. Omitting the key entirely still takes the environment.
+	const publicBaseUrl =
+		"publicBaseUrl" in options ? options.publicBaseUrl : env.R2_PUBLIC_BASE_URL;
+
 	// Resolved on first use rather than at construction, so a server without R2
 	// credentials still boots and only upload endpoints report the gap.
 	let storage: ObjectStorage | undefined;
@@ -154,8 +169,8 @@ export function createApp(options: AppOptions = {}) {
 			.use(adminReferenceRoutes())
 			.use(designerContentRoutes(getStorage))
 			.use(adminContentRoutes(getStorage))
-			.use(feedRoutes())
-			.use(downloadRoutes(getStorage))
+			.use(feedRoutes({ publicBaseUrl }))
+			.use(downloadRoutes(getStorage, { publicBaseUrl }))
 			.use(moderationRoutes())
 			.use(analyticsRoutes())
 			// Registered last so earlier routes win; this catches only genuinely

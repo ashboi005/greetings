@@ -257,6 +257,14 @@ separate origins. Chrome treats `localhost` as trustworthy so this works in
 development over plain HTTP, but any other environment must serve both over
 HTTPS or the session cookie will not be sent.
 
+**Images are served from a CDN, not the API.** Set `R2_PUBLIC_BASE_URL` to a custom domain in front
+of the R2 bucket and enable Images → Transformations on that Cloudflare zone. Feed items then carry
+an `imageUrl` the mobile app renders thumbnails from via a `/cdn-cgi/image/width=…/` path prefix
+(not a query string, which is ignored), and the tracked
+download endpoint returns the same permanent URL instead of a five-minute signed one. Without it,
+`imageUrl` is null and downloads fall back to signed URLs — fine locally, not enough for the app.
+See `apps/server/.env.example` for the setup and the check that resizing is actually on.
+
 **Without R2 credentials** the panels still work — previews come back null and
 the image slot says so, rather than the whole review screen failing over a
 thumbnail.

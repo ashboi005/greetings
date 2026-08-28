@@ -82,8 +82,17 @@ export const feedItem = t.Object({
 	designer: t.Object({ id: t.String(), name: t.String() }),
 	storageKey: t.Union([t.String(), t.Null()], {
 		description:
-			"Object key, not a URL. Bytes are only reachable through " +
-			"POST /v1/content/{id}/download, which is what makes counts accurate.",
+			"Object key. Useful for cache keys and logging; prefer imageUrl for display.",
+	}),
+	imageUrl: t.Union([t.String(), t.Null()], {
+		description:
+			"Full-size image on the CDN, for display. For a thumbnail, insert a " +
+			"Cloudflare transform segment after the origin — " +
+			"`https://cdn.example.com/cdn-cgi/image/width=400,format=auto/<path>` — " +
+			"rather than appending a query string, which is ignored. Never render " +
+			"the full-size original in a list. Null when this deployment has no " +
+			"CDN configured. Saving an image still goes through " +
+			"POST /v1/content/{id}/download, which is what counts it.",
 	}),
 });
 
@@ -100,8 +109,16 @@ export const searchResponse = t.Object({
 });
 
 export const downloadResponse = t.Object({
-	url: t.String({ description: "Signed URL, valid for five minutes" }),
-	expiresInSeconds: t.Number(),
+	url: t.String({
+		description:
+			"Where to fetch the image. A CDN URL when one is configured, otherwise " +
+			"a signed URL that expires.",
+	}),
+	expiresInSeconds: t.Union([t.Number(), t.Null()], {
+		description:
+			"Seconds the URL stays valid, or null when it does not expire (CDN). " +
+			"Null means the URL is safe to cache and reuse.",
+	}),
 	recorded: t.Boolean({
 		description: "False when an Idempotency-Key replay returned a stored URL",
 	}),

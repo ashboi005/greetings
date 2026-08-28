@@ -32,7 +32,12 @@ export function profileRoutes() {
 			"/regions",
 			({ set }) => {
 				set.headers["cache-control"] = REFERENCE_CACHE_CONTROL;
-				return cachedReference("regions", () =>
+				// Key is "regions:active", not "regions": the validation helper below
+				// caches the *unfiltered* list under its own key. Two loaders sharing
+				// one key means whichever runs first wins, and the losing caller
+				// silently gets the other's rows — here that would have leaked
+				// retired regions into the public picker.
+				return cachedReference("regions:active", () =>
 					db
 						.select({ code: regions.code, name: regions.name })
 						.from(regions)
@@ -54,7 +59,8 @@ export function profileRoutes() {
 			"/languages",
 			({ set }) => {
 				set.headers["cache-control"] = REFERENCE_CACHE_CONTROL;
-				return cachedReference("languages", () =>
+				// "languages:active" for the same reason as regions above.
+				return cachedReference("languages:active", () =>
 					db
 						.select({
 							code: languages.code,
@@ -249,22 +255,26 @@ export function profileRoutes() {
  * two lists of a few dozen rows that never change; holding them costs a few
  * kilobytes and removes two round trips from the path every user walks once.
  */
+/**
+ * Every code that exists, retired ones included.
+ *
+ * Deliberately unfiltered, and deliberately under a different cache key from the
+ * public lists. Validation and display want different answers: a picker must not
+ * offer a retired region, but someone whose region was retired after they chose
+ * it must still be able to save their profile. Rejecting their existing code
+ * would lock them out of editing their own display name.
+ */
 export async function knownRegionCodes(): Promise<Set<string>> {
-	const rows = await cachedReference("regions", () =>
-		db.select({ code: regions.code, name: regions.name }).from(regions),
+	const rows = await cachedReference("regions:all", () =>
+		db.select({ code: regions.code }).from(regions),
 	);
 	return new Set(rows.map((row) => row.code));
 }
 
+/** Every language code, retired included — see knownRegionCodes. */
 export async function knownLanguageCodes(): Promise<Set<string>> {
-	const rows = await cachedReference("languages", () =>
-		db
-			.select({
-				code: languages.code,
-				name: languages.name,
-				nativeName: languages.nativeName,
-			})
-			.from(languages),
+	const rows = await cachedReference("languages:all", () =>
+		db.select({ code: languages.code }).from(languages),
 	);
 	return new Set(rows.map((row) => row.code));
 }

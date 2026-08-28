@@ -30,3 +30,9 @@ process.env.NODE_ENV = "test";
 // distinguishes callers with x-forwarded-for instead. Production defaults this
 // off, which is why it has to be set explicitly here rather than relied upon.
 process.env.TRUST_PROXY_HEADERS = "true";
+
+// Tests must not depend on whether the developer happens to have a CDN in their
+// .env. Cleared here so `createApp()` with no options always means "no CDN", and
+// the tests that exercise the CDN pass a base URL explicitly. Without this, the
+// suite's results changed the day a real value was added to .env.
+delete process.env.R2_PUBLIC_BASE_URL;

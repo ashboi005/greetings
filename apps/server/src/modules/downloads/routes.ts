@@ -14,7 +14,10 @@ import { recordDownload } from "./service";
  * to prefetch or cache a GET, which would inflate the counts designers are
  * measured on.
  */
-export function downloadRoutes(storage: () => ObjectStorage) {
+export function downloadRoutes(
+	storage: () => ObjectStorage,
+	options: { publicBaseUrl?: string } = {},
+) {
 	return new Elysia({ prefix: "/v1" }).use(authGuard).post(
 		"/content/:id/download",
 		async ({ currentUser, params, body, headers }) => {
@@ -32,6 +35,7 @@ export function downloadRoutes(storage: () => ObjectStorage) {
 				source: body?.source ?? "detail",
 				idempotencyKey: headers["idempotency-key"],
 				storage: storage(),
+				publicBaseUrl: options.publicBaseUrl,
 			});
 		},
 		{

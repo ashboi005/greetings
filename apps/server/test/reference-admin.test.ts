@@ -548,3 +548,52 @@ describe("the audit trail", () => {
 		expect(new Set(entities)).toEqual(new Set(["language"]));
 	});
 });
+
+describe("the read cache does not mix filtered and unfiltered lists", () => {
+	test("a retired region never appears in the public list, whichever ran first", async () => {
+		const admin = await auth.signIn({ role: "admin" });
+		const reader = await auth.signIn();
+
+		await api.patch("/v1/admin/reference/regions/IN-MH", {
+			token: admin.token,
+			body: { isActive: false },
+		});
+
+		// Warm the cache through the *validation* path first. It caches the
+		// unfiltered list, and when both paths shared one key this call decided
+		// what the public endpoint returned for the next minute — leaking the
+		// retired region into the onboarding picker.
+		const stillAccepted = await api.put("/v1/me/profile", {
+			token: reader.token,
+			body: { regionCode: "IN-MH", languages: ["hi"] },
+		});
+		expect(stillAccepted.status).toBe(200);
+
+		const publicList = await api.get("/v1/regions", { token: reader.token });
+		expect(
+			(publicList.body as { code: string }[]).map((r) => r.code),
+		).not.toContain("IN-MH");
+	});
+
+	test("a retired language likewise", async () => {
+		const admin = await auth.signIn({ role: "admin" });
+		const reader = await auth.signIn();
+
+		await api.patch("/v1/admin/reference/languages/ta", {
+			token: admin.token,
+			body: { isActive: false },
+		});
+
+		// Someone who already chose it keeps working: retiring is not deletion.
+		const stillAccepted = await api.put("/v1/me/profile", {
+			token: reader.token,
+			body: { regionCode: "IN-MH", languages: ["ta"] },
+		});
+		expect(stillAccepted.status).toBe(200);
+
+		const publicList = await api.get("/v1/languages", { token: reader.token });
+		expect(
+			(publicList.body as { code: string }[]).map((l) => l.code),
+		).not.toContain("ta");
+	});
+});

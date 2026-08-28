@@ -12,6 +12,7 @@ import {
 	feedResponse,
 	searchResponse,
 } from "../../lib/responses";
+import { publicImageUrl } from "../../lib/storage";
 import { authGuard, requireUser } from "../auth/session";
 import { queryFeed, querySearch } from "./queries";
 import { decodeFeedCursor, encodeFeedCursor } from "./ranking";
@@ -26,7 +27,7 @@ const MAX_LIMIT = 50;
  * too — there is no reason to forbid it, and the mobile app is the only client
  * that will.
  */
-export function feedRoutes() {
+export function feedRoutes(options: { publicBaseUrl?: string } = {}) {
 	return new Elysia({ prefix: "/v1" })
 		.use(authGuard)
 
@@ -53,7 +54,7 @@ export function feedRoutes() {
 				const last = page.at(-1);
 
 				return {
-					items: page.map(toFeedItem),
+					items: page.map((row) => toFeedItem(row, options.publicBaseUrl)),
 					nextCursor:
 						rows.length > limit && last
 							? encodeFeedCursor({ score: last.score, id: last.id })
@@ -100,7 +101,7 @@ export function feedRoutes() {
 
 				return {
 					items: page.map(({ rank, ...row }) => ({
-						...toFeedItem(row),
+						...toFeedItem(row, options.publicBaseUrl),
 						rank,
 					})),
 					nextCursor:
@@ -173,18 +174,21 @@ async function loadPreferences(userId: string) {
 	};
 }
 
-function toFeedItem(row: {
-	id: string;
-	title: string;
-	description: string | null;
-	primaryLanguage: string;
-	regionCode: string | null;
-	downloadCount: number;
-	publishedAt: Date;
-	designerId: string;
-	designerName: string;
-	storageKey: string | null;
-}) {
+function toFeedItem(
+	row: {
+		id: string;
+		title: string;
+		description: string | null;
+		primaryLanguage: string;
+		regionCode: string | null;
+		downloadCount: number;
+		publishedAt: Date;
+		designerId: string;
+		designerName: string;
+		storageKey: string | null;
+	},
+	publicBaseUrl: string | undefined,
+) {
 	return {
 		id: row.id,
 		title: row.title,
@@ -194,9 +198,16 @@ function toFeedItem(row: {
 		downloadCount: row.downloadCount,
 		publishedAt: row.publishedAt,
 		designer: { id: row.designerId, name: row.designerName },
-		// The key, not a URL: bytes are only reachable through the tracked
-		// download endpoint (spec §8), which is what keeps counts honest.
+		// The key is kept because it is a stable cache key and useful in logs.
 		storageKey: row.storageKey,
+		// Built here rather than sent to the client as a base URL plus a key.
+		// It costs nothing — string work, no signing, no network, no per-item
+		// query — and it keeps the bucket layout a server detail, so moving
+		// objects or changing the CDN host does not need an app release.
+		//
+		// This is for *display*. Saving an image still goes through the download
+		// endpoint, which is what records it (spec §8).
+		imageUrl: publicImageUrl(row.storageKey, publicBaseUrl),
 	};
 }
 

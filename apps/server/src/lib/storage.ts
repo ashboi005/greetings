@@ -157,6 +157,34 @@ export function withPreviews<T extends { storageKey: string }>(
 }
 
 /**
+ * The public CDN URL for an object, or null when no CDN is configured.
+ *
+ * Pure string work — no signing, no network, no per-image cost — which is the
+ * whole point. A feed page can carry a URL for every item without the server
+ * doing anything per item, and the client can request a thumbnail by appending
+ * `?width=400&format=webp` rather than asking us for one.
+ *
+ * Encoding is per path segment. Keys are generated as `content/<uuid>/<uuid>.ext`
+ * so nothing needs escaping today, but a key is data and building a URL by
+ * concatenation is how that stops being true quietly.
+ */
+export function publicImageUrl(
+	key: string | null | undefined,
+	baseUrl: string | undefined,
+): string | null {
+	if (!key || !baseUrl) return null;
+
+	const base = baseUrl.replace(/\/+$/, "");
+	const path = key
+		.split("/")
+		.filter((segment) => segment.length > 0)
+		.map(encodeURIComponent)
+		.join("/");
+
+	return path ? `${base}/${path}` : null;
+}
+
+/**
  * Storage if this deployment has it, null if not.
  *
  * The counterpart to `requireObjectStorage`, for the callers that can carry on

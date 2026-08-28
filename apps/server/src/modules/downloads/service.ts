@@ -16,7 +16,7 @@ import {
 } from "@greetings/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { conflict, notFound } from "../../lib/errors";
-import type { ObjectStorage } from "../../lib/storage";
+import { type ObjectStorage, publicImageUrl } from "../../lib/storage";
 
 /** How long a signed download URL stays valid. */
 export const DOWNLOAD_URL_TTL_SECONDS = 5 * 60;
@@ -30,7 +30,8 @@ export const IDEMPOTENCY_WINDOW_SECONDS = 60;
 
 export interface DownloadResult {
 	url: string;
-	expiresInSeconds: number;
+	/** Null when the URL is a CDN URL and therefore does not expire. */
+	expiresInSeconds: number | null;
 	/** False when an Idempotency-Key replay returned a stored URL. */
 	recorded: boolean;
 }
@@ -41,6 +42,8 @@ export async function recordDownload(input: {
 	source: DownloadSource;
 	idempotencyKey?: string;
 	storage: ObjectStorage;
+	/** Public CDN origin, when this deployment has one. */
+	publicBaseUrl?: string;
 }): Promise<DownloadResult> {
 	const [item] = await db
 		.select({
@@ -72,10 +75,21 @@ export async function recordDownload(input: {
 
 	if (!item.storageKey) throw notFound("This content has no image.");
 
-	const url = input.storage.presignDownload({
-		key: item.storageKey,
-		expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
-	});
+	// A CDN URL when there is a CDN, and it is the better answer: permanent, so
+	// the client can cache the file instead of re-fetching it, and served from
+	// an edge near the user rather than from the bucket's region.
+	//
+	// The download is still recorded either way — that is what this endpoint is
+	// for, and it is why the app calls it once when someone saves an image
+	// rather than once per tile that scrolls past.
+	const cdnUrl = publicImageUrl(item.storageKey, input.publicBaseUrl);
+	const url =
+		cdnUrl ??
+		input.storage.presignDownload({
+			key: item.storageKey,
+			expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
+		});
+	const expiresInSeconds = cdnUrl ? null : DOWNLOAD_URL_TTL_SECONDS;
 
 	// Claiming the key, recording the event and moving the counters are one
 	// statement.
@@ -159,7 +173,7 @@ export async function recordDownload(input: {
 	`);
 
 	if (result.rows.length > 0) {
-		return { url, expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS, recorded: true };
+		return { url, expiresInSeconds, recorded: true };
 	}
 
 	// Nothing was written, so this is a replay inside the window. Read back what
@@ -180,6 +194,7 @@ async function replayDownload(input: {
 	contentId: string;
 	userId: string;
 	idempotencyKey?: string;
+	publicBaseUrl?: string;
 }): Promise<DownloadResult> {
 	const [stored] = await db
 		.select({
@@ -207,9 +222,15 @@ async function replayDownload(input: {
 		);
 	}
 
+	// Read the expiry off the stored URL rather than off current configuration.
+	// A CDN turned on during the replay window would otherwise make us report a
+	// signed URL as permanent, and the client would cache something about to die.
+	const base = input.publicBaseUrl?.replace(/\/+$/, "");
+	const isCdnUrl = Boolean(base) && stored.signedUrl.startsWith(`${base}/`);
+
 	return {
 		url: stored.signedUrl,
-		expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
+		expiresInSeconds: isCdnUrl ? null : DOWNLOAD_URL_TTL_SECONDS,
 		recorded: false,
 	};
 }

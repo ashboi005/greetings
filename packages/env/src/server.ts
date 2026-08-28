@@ -51,6 +51,27 @@ export const env = createEnv({
 		R2_ACCESS_KEY_ID: z.string().min(1).optional(),
 		R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
 		R2_BUCKET: z.string().min(1).optional(),
+
+		/**
+		 * Public CDN origin in front of the bucket, e.g. `https://cdn.example.com`.
+		 *
+		 * When set, image URLs are built from it and served straight from
+		 * Cloudflare's edge: cacheable, no expiry, and resizable by query
+		 * parameter. That is what makes a feed of images tolerable on a slow
+		 * mobile connection, where a five-minute signed URL cannot be cached
+		 * between sessions and every scroll re-fetches full-size images.
+		 *
+		 * Optional, and everything degrades correctly without it: feed items carry
+		 * a null `imageUrl` and downloads fall back to short-lived signed URLs, so
+		 * local development and any deployment without a CDN keep working.
+		 *
+		 * The trade is deliberate and worth stating plainly: objects behind this
+		 * origin are readable by anyone who knows a key, so the download counter
+		 * is accurate for well-behaved clients rather than enforced. Our app is
+		 * the only client, and cheap cached images are worth more than a counter
+		 * nobody is trying to evade.
+		 */
+		R2_PUBLIC_BASE_URL: z.url().optional(),
 		// --- Operational limits (spec §12) ---
 
 		/**

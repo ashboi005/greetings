@@ -261,7 +261,17 @@ The backend never handles image bytes.
 5. `POST /v1/designer/content/:id/submit` → `pending_review`
 
 Thumbnails come from Cloudflare Image Resizing URL parameters at the CDN edge — no backend image
-processing and no variant pipeline.
+processing and no variant pipeline. The server builds `imageUrl` from `R2_PUBLIC_BASE_URL` and the
+object key (`publicImageUrl()` in `lib/storage.ts`); the client asks for a size by inserting a
+`/cdn-cgi/image/width=400,format=auto/` segment between the origin and the object path. Note that
+this is a path prefix — a `?width=` query string is silently ignored, and `format=auto` is required
+for WebP (`format=webp` is ignored, verified against the live CDN). Building the URL server-side rather than shipping the base URL to clients costs
+nothing — string work, no signing, no per-item query — and keeps the bucket layout a server detail,
+so moving objects or changing CDN host does not require a mobile release.
+
+**Resizing must be enabled on the Cloudflare zone** (Images → Transformations). Without it the
+parameters are silently ignored and every thumbnail downloads a full-size original — a failure that
+shows up as a slow feed rather than an error. See `apps/server/.env.example` for the check.
 
 A cleanup job removes drafts with no confirmed asset after 7 days and purges their R2 objects.
 
@@ -359,16 +369,35 @@ to look at if the catalogue grows another order of magnitude.
 
 ## 8. Downloads
 
-`POST /v1/content/:id/download` is the **only** route to image bytes:
+`POST /v1/content/:id/download` is the route a client calls when someone **saves** an image:
 
 1. Verify content is published and not held
 2. Insert a `download_events` row, stamping designerId and the user's profile region
 3. Atomically increment `content.downloadCount`
-4. Return a signed R2 URL valid for 5 minutes
+4. Return a URL
 
-Because objects are not publicly hotlinkable, every download passes through this endpoint — which is
-what makes the counts trustworthy rather than an undercount. Clients send an `Idempotency-Key`
-header; a repeat within 60 seconds returns the same URL without double-counting a retry.
+Steps 2 and 3 are one data-modifying CTE, so a download is either recorded completely or not at all.
+Clients send an `Idempotency-Key`; a repeat within 60 seconds returns the same URL without
+double-counting a retry, and reusing a key for *different* content is a 409 rather than the wrong
+image.
+
+**Which URL comes back depends on `R2_PUBLIC_BASE_URL`.** With a CDN configured it is the permanent
+public URL and `expiresInSeconds` is `null`, so the client caches the file and never asks again.
+Without one it falls back to a signed R2 URL valid for five minutes, which is what local development
+and any CDN-less deployment get.
+
+**Displaying is not downloading.** Feed and search items carry `imageUrl`, a public CDN URL, and the
+app renders thumbnails from it by appending Cloudflare resizing parameters. That path never touches
+this endpoint, which is the point: a feed that counted a download for every tile that scrolled past
+would make the designer analytics meaningless. A test asserts that paging the feed records zero
+downloads.
+
+**What the public bucket gives up.** Objects behind the CDN are readable by anyone holding a key, so
+the counter is accurate for well-behaved clients rather than enforced. This was chosen knowingly:
+a signed URL per tile cannot be cached between sessions, and re-fetching full-size images on every
+scroll is a far worse outcome on Indian mobile connections than a counter nobody is attacking. Note
+what is *not* given up — moderation still holds, because a removed or held item returns 409 here and
+stops appearing in the feed, so no new URL is handed out for it.
 
 ---
 
@@ -1101,7 +1130,7 @@ holds one as a bearer token. Revocation is by deleting the row, which role chang
 opening the panel. There is no transport configured and no queue to put one behind.
 
 **No image processing.** No resizing, no thumbnails, no format conversion, no moderation scanning of
-pixels. Thumbnails are intended to come from Cloudflare Image Resizing URL parameters at the edge.
+pixels *in the backend*. Thumbnails come from Cloudflare Image Resizing at the edge (§6, §8).
 The backend never sees image bytes at all, which is the property that keeps it cheap — and it means
 "is this image actually what the title claims" is answered by a human reviewer, not by software.
 
