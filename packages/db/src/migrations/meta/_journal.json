@@ -99,6 +99,13 @@
       "when": 1787161796747,
       "tag": "0013_greedy_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788112147957,
+      "tag": "0014_breezy_scarlet_spider",
+      "breakpoints": true
     }
   ]
 }

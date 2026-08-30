@@ -44,6 +44,8 @@ export async function recordDownload(input: {
 	storage: ObjectStorage;
 	/** Public CDN origin, when this deployment has one. */
 	publicBaseUrl?: string;
+	/** True when the user personalised the image before sharing it. */
+	customized?: boolean;
 }): Promise<DownloadResult> {
 	const [item] = await db
 		.select({
@@ -149,7 +151,7 @@ export async function recordDownload(input: {
 		WITH ${claimGate}
 		recorded AS (
 			INSERT INTO download_events
-				(content_id, designer_id, user_id, region_code, language_code, source)
+				(content_id, designer_id, user_id, region_code, language_code, source, customized)
 			SELECT
 				${input.contentId},
 				${item.designerId},
@@ -158,7 +160,8 @@ export async function recordDownload(input: {
 				-- The language of what was downloaded, not of the user: a user may
 				-- prefer several, and the useful question is which content travels.
 				${item.primaryLanguage},
-				${input.source}::download_source
+				${input.source}::download_source,
+				${input.customized ?? false}
 			FROM (SELECT ${input.userId}::text AS uid) me
 			LEFT JOIN user_profiles p ON p.user_id = me.uid
 			${gate}

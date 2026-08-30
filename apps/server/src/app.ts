@@ -19,9 +19,12 @@ import { analyticsRoutes } from "./modules/analytics/routes";
 import { authRoutes } from "./modules/auth/routes";
 import { adminContentRoutes } from "./modules/content/admin-routes";
 import { designerContentRoutes } from "./modules/content/designer-routes";
+import { designRoutes } from "./modules/designs/routes";
 import { downloadRoutes } from "./modules/downloads/routes";
 import { feedRoutes } from "./modules/feed/routes";
 import { moderationRoutes } from "./modules/moderation/routes";
+import { avatarRoutes } from "./modules/profile/avatar";
+import { downloadHistoryRoutes } from "./modules/profile/history";
 import { profileRoutes } from "./modules/profile/routes";
 
 /**
@@ -162,7 +165,10 @@ export function createApp(options: AppOptions = {}) {
 				},
 			)
 			.use(authRoutes(options.tokenVerifier))
-			.use(profileRoutes())
+			.use(profileRoutes({ publicBaseUrl }))
+			.use(avatarRoutes(getStorage, { publicBaseUrl }))
+			.use(downloadHistoryRoutes({ publicBaseUrl }))
+			.use(designRoutes(getStorage, { publicBaseUrl }))
 			.use(adminRoleRoutes())
 			.use(adminAuditRoutes())
 			.use(adminAccountRoutes())

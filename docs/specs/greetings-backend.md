@@ -1102,6 +1102,96 @@ unconfigured R2 and left the rollup half-done; it now purges what it can and rep
 
 ---
 
+## 16. The mobile app's own surface
+
+Phase 3 needs three things the review-and-publish machinery does not provide. All three are private
+to one user, none of them touches the content lifecycle.
+
+### 16.1 Personalised sharing
+
+A user's name, designation, contact number and logo are burned into a graphic when they share it, so
+the image doubles as a business card. `user_profiles` therefore carries `designation`,
+`contact_phone` and `avatar_key` alongside the existing name and region.
+
+**The compositing happens on the device, not here.** That is not a shortcut — it is forced by the
+product. The user may drag and resize the overlay before saving, and no server can be in the loop on
+a drag. Once the client owns a compositor for that, doing it server-side as well would mean two
+renderers that must agree pixel-for-pixel, and it would invert the property that makes this cheap:
+every output would be unique per user, so the CDN cache hit rate would fall to zero and all image
+egress would move onto the VPS (§8).
+
+Three columns worth their comments:
+
+- **`contact_phone` is not `phone`.** `phone` is UNIQUE and only ever written from a Firebase-verified
+  sign-in; it is one of the two identifiers a role invite matches on. The printed number is typed by
+  the user, never verified, and two colleagues may legitimately share an office line. Putting it in
+  the same column would mean a unique-constraint collision between users and an unverified value in
+  the field used for identity.
+- **`avatar_key` is not `user.image`.** That field holds the Google or Firebase picture and is
+  rewritten on every sign-in, so a logo stored there would be erased by a re-login.
+- **`download_events.customized`** records whether the overlay was used. With compositing on the
+  device it is the only signal the feature exists.
+
+`PUT /v1/me/profile` remains a replace, not a merge: an omitted field is cleared, as `display_name`
+and the language set already behaved. The profile editor submits the whole form.
+
+### 16.2 My Designs
+
+`user_designs` holds a user's own compositions: `design_json` (the editable scene), an optional
+`source_image_key` (one image per design), and `preview_key` (a flattened render).
+
+Deliberately **not** rows in `content`. They share a shape with published content and nothing else —
+private, unreviewed, unranked, uncounted — and folding them in would mean every feed, search,
+moderation and analytics query growing a predicate to exclude them. The day one of those is
+forgotten, a private draft appears in a stranger's feed.
+
+`design_json` is opaque to the server and stays that way. The renderer is Skia on the device, so
+validating the structure here would mean two definitions of a design that have to agree and a deploy
+every time the editor gains a feature. It is size-capped at 256 KB instead — the only thing standing
+between an editor bug and a row that breaks the list query.
+
+Ownership failures return **404, not 403**. Confirming that an id exists is a small leak with no
+upside.
+
+### 16.3 Download history
+
+`GET /v1/me/downloads`, grouped by content with a `timesDownloaded` count, because a history screen
+that lists the same image five times is noise.
+
+This required a new index. `download_events` had four, leading with designer, content, region and
+time — nothing covered `user_id`, so the query was a sequential scan of the largest table in the
+system. `download_events_user_idx (user_id, created_at)` fixes it; `EXPLAIN` confirms the index scan.
+
+### 16.4 Uploads
+
+Three new upload paths — the logo, a design's source image, its preview — all reusing the
+designer flow's shape: the server signs a URL, the client PUTs straight to R2, the server confirms
+with a HEAD what actually landed rather than believing the request body. Extracted to
+`apps/server/src/lib/uploads.ts`.
+
+Two guards carry the weight. Keys are namespaced by owner (`avatars/<userId>/`, `designs/<designId>/`)
+and the confirm step refuses a key outside that prefix — otherwise a caller could confirm someone
+else's object into their own profile. And every key gets a random suffix rather than a fixed name
+like `avatar.png`: a replacement written to the same key would be served stale from the CDN edge,
+and the user would see their old logo and assume the upload failed.
+
+---
+
+## 17. Deliberately deferred, with a reason
+
+Recorded because each is a decision, not an oversight. See `docs/future-monetisation.md`.
+
+**No deleting a saved design.** Storage therefore only grows. That is the intended precondition for
+a future upload cap with a paid tier above it — a limit means nothing if a user can delete their way
+back under it.
+
+**No watermarks.** When a paywall arrives, a watermark applies by default and lifts on payment. Note
+what that will and will not be worth: with compositing on the device, the watermark is applied on
+the device too, and the clean original stays fetchable from the CDN by anyone holding the key. It
+will be a nudge, not an enforcement.
+
+---
+
 ## 15. Milestones
 
 | # | Scope | Verifiable when |

@@ -16,6 +16,7 @@ import {
 	tagListResponse,
 } from "../../lib/responses";
 import { optionalEnum } from "../../lib/schema";
+import { publicImageUrl } from "../../lib/storage";
 import { authGuard, requireUser } from "../auth/session";
 
 /**
@@ -25,7 +26,7 @@ import { authGuard, requireUser } from "../auth/session";
  * download event for analytics, and both region and languages drive feed
  * ranking. A user without a region gets only global content.
  */
-export function profileRoutes() {
+export function profileRoutes(options: { publicBaseUrl?: string } = {}) {
 	return new Elysia({ prefix: "/v1" })
 		.use(authGuard)
 		.get(
@@ -125,6 +126,9 @@ export function profileRoutes() {
 					SELECT
 						p.display_name  AS "displayName",
 						p.phone         AS phone,
+						p.designation   AS designation,
+						p.contact_phone AS "contactPhone",
+						p.avatar_key    AS "avatarKey",
 						p.region_code   AS "regionCode",
 						p.onboarded_at  AS "onboardedAt",
 						COALESCE(
@@ -134,13 +138,17 @@ export function profileRoutes() {
 					FROM (SELECT ${userId}::text AS uid) me
 					LEFT JOIN user_profiles p ON p.user_id = me.uid
 					LEFT JOIN user_languages ul ON ul.user_id = me.uid
-					GROUP BY p.display_name, p.phone, p.region_code, p.onboarded_at
+					GROUP BY p.display_name, p.phone, p.designation, p.contact_phone,
+					         p.avatar_key, p.region_code, p.onboarded_at
 				`);
 
 				const row = result.rows[0] as
 					| {
 							displayName: string | null;
 							phone: string | null;
+							designation: string | null;
+							contactPhone: string | null;
+							avatarKey: string | null;
 							regionCode: string | null;
 							onboardedAt: Date | null;
 							languages: string[];
@@ -150,6 +158,13 @@ export function profileRoutes() {
 				return {
 					displayName: row?.displayName ?? null,
 					phone: row?.phone ?? null,
+					designation: row?.designation ?? null,
+					contactPhone: row?.contactPhone ?? null,
+					// The key is returned as well as the URL: it is the stable
+					// identity of the object, and the URL is null on a deployment
+					// with no CDN.
+					avatarKey: row?.avatarKey ?? null,
+					avatarUrl: publicImageUrl(row?.avatarKey, options.publicBaseUrl),
 					regionCode: row?.regionCode ?? null,
 					languages: row?.languages ?? [],
 					onboarded: Boolean(row?.onboardedAt),
@@ -188,22 +203,32 @@ export function profileRoutes() {
 				await db.execute(sql`
 					WITH upserted AS (
 						INSERT INTO user_profiles
-							(user_id, display_name, region_code, onboarded_at, created_at, updated_at)
+							(user_id, display_name, designation, contact_phone,
+							 region_code, onboarded_at, created_at, updated_at)
 						VALUES (
 							${userId},
 							${body.displayName ?? null},
+							${body.designation ?? null},
+							${body.contactPhone ?? null},
 							${body.regionCode},
 							${now},
 							${now},
 							${now}
 						)
 						ON CONFLICT (user_id) DO UPDATE SET
-							display_name = EXCLUDED.display_name,
-							region_code  = EXCLUDED.region_code,
+							display_name  = EXCLUDED.display_name,
+							-- Replace, not merge. This is a PUT: an omitted field is a
+							-- field the caller wants empty, which is already how
+							-- display_name and the language set behave. The profile
+							-- editor therefore has to submit the whole form, and the
+							-- integration guide says so.
+							designation   = EXCLUDED.designation,
+							contact_phone = EXCLUDED.contact_phone,
+							region_code   = EXCLUDED.region_code,
 							-- Keep the first onboarding timestamp: later edits are
 							-- profile changes, not a second onboarding.
-							onboarded_at = COALESCE(user_profiles.onboarded_at, EXCLUDED.onboarded_at),
-							updated_at   = EXCLUDED.updated_at
+							onboarded_at  = COALESCE(user_profiles.onboarded_at, EXCLUDED.onboarded_at),
+							updated_at    = EXCLUDED.updated_at
 					),
 					added AS (
 						INSERT INTO user_languages (user_id, language_code)
@@ -221,6 +246,15 @@ export function profileRoutes() {
 				requireRole: true,
 				body: t.Object({
 					displayName: t.Optional(t.String({ minLength: 1, maxLength: 80 })),
+					// Printed on shared graphics (spec §16). Optional here because
+					// this route is also the profile editor, and the app decides
+					// what onboarding insists on.
+					designation: t.Optional(t.String({ maxLength: 80 })),
+					// Free text, and unverified by design — see the column comment
+					// in packages/db/src/schema/profile.ts. Not validated as a phone
+					// number: users write things like "+91 98765 43210 (WhatsApp)",
+					// and this is printed, never dialled or matched on.
+					contactPhone: t.Optional(t.String({ maxLength: 40 })),
 					regionCode: t.String({
 						minLength: 2,
 						description: "Region code from GET /v1/regions",

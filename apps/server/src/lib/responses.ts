@@ -64,7 +64,16 @@ export const tagListResponse = t.Array(
 
 export const profileResponse = t.Object({
 	displayName: t.Union([t.String(), t.Null()]),
+	/** Verified at sign-in. Identity, not a contact detail — see contactPhone. */
 	phone: t.Union([t.String(), t.Null()]),
+	/** Business title printed on shared graphics. */
+	designation: t.Union([t.String(), t.Null()]),
+	/** The number printed on shared graphics. Free text, never verified. */
+	contactPhone: t.Union([t.String(), t.Null()]),
+	/** Storage key for the uploaded logo; stable identity of the object. */
+	avatarKey: t.Union([t.String(), t.Null()]),
+	/** CDN URL for the logo, or null with no logo or no CDN configured. */
+	avatarUrl: t.Union([t.String(), t.Null()]),
 	regionCode: t.Union([t.String(), t.Null()]),
 	languages: t.Array(t.String()),
 	onboarded: t.Boolean(),

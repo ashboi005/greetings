@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import {
 	bigserial,
+	boolean,
 	date,
 	index,
 	integer,
@@ -54,6 +55,14 @@ export const downloadEvents = pgTable(
 		regionCode: text("region_code").references(() => regions.code),
 		languageCode: text("language_code").references(() => languages.code),
 		source: downloadSourceEnum("source").notNull(),
+		/**
+		 * Whether the user personalised the image before sharing it.
+		 *
+		 * The overlay is composed on the device, so this is the only signal that
+		 * the feature is being used at all. Defaults false, which is what every
+		 * historical row means.
+		 */
+		customized: boolean("customized").default(false).notNull(),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 	},
 	(table) => [
@@ -62,6 +71,11 @@ export const downloadEvents = pgTable(
 		index("download_events_content_idx").on(table.contentId, table.createdAt),
 		index("download_events_region_idx").on(table.regionCode, table.createdAt),
 		index("download_events_created_at_idx").on(table.createdAt),
+		// The user's own download history. Without this the history screen is a
+		// sequential scan of the largest table in the database — the other four
+		// indexes lead with designer, content, region and time, none of which
+		// helps a query filtered by user.
+		index("download_events_user_idx").on(table.userId, table.createdAt),
 	],
 );
 

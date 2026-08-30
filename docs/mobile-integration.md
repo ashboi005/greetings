@@ -41,7 +41,7 @@ Branch on `code`, never on the message text — messages are written for humans 
 | `NOT_FOUND` | 404 | Gone, or never published. |
 | `CONFLICT` | 409 | Already done, or not allowed in this state. Usually not an error to show. |
 | `UNPROCESSABLE` | 422 | Schema validation failed. `details` lists the fields. Fix the call. |
-| `RATE_LIMITED` | 429 | Back off — see §10. |
+| `RATE_LIMITED` | 429 | Back off — see §13. |
 | `INTERNAL` | 500 | Ours. Retry once, then show a generic failure. |
 
 A `422` and a `400` both mean *you* got it wrong, but `422` is the schema layer, so `details` names
@@ -125,6 +125,11 @@ routing question too — prefer that one and skip this.
 
 ## 3. Profile and onboarding
 
+**First, a distinction that will otherwise bite you.** Screen 1's English/Hindi choice is the *app's
+own* language — pure client-side i18n, no endpoint, nothing stored on the server. The `languages` in
+this section are the languages of *content the user wants to see*, and they drive feed ranking. A
+user can read the app in English and want Marathi greetings. Never send one as the other.
+
 Onboarding is **not** cosmetic, which is worth knowing because it affects how hard you should push
 users through it. The region chosen here is stamped onto every download event for analytics, and
 region plus languages are two of the three ranking signals in the feed. **A user who skips
@@ -164,14 +169,24 @@ One call does the whole thing. It is also the "edit my profile" endpoint — sam
 
 ```jsonc
 {
-  "regionCode": "IN-MH",          // required, from GET /v1/regions
-  "languages": ["hi", "mr"],      // required, 1–10 codes from GET /v1/languages
-  "displayName": "Ashwath"        // optional, 1–80 chars
+  "regionCode": "IN-MH",                  // required, from GET /v1/regions
+  "languages": ["hi", "mr"],              // required, 1–10 codes from GET /v1/languages
+  "displayName": "Ashwath",               // optional, 1–80 chars
+  "designation": "Property Consultant",   // optional, ≤80 — printed on shared graphics
+  "contactPhone": "+91 98765 43210"       // optional, ≤40 — printed on shared graphics
 }
 ```
 
 Returns `{ "ok": true }`.
 
+- **This is a PUT, so it replaces.** Any field you omit is *cleared*, not preserved — `designation`
+  and `contactPhone` behave exactly like `displayName` and `languages` already did. The profile
+  editor must therefore submit the whole form every time, not just the field that changed. This is
+  the single most likely way to lose a user's data in this API.
+- **`contactPhone` is free text and is not the sign-in number.** Autofill it from the OTP number
+  during onboarding, then let the user edit it. It is never verified and never dialled — it is
+  printed. Two users may legitimately have the same one, so there is no uniqueness error to handle.
+  The verified sign-in number is `phone`, and it is read-only.
 - **`languages` is a full replacement**, not a merge. To remove one, send the array without it.
 - **Multiple languages are normal and encouraged.** Someone in Maharashtra plausibly wants Marathi
   and Hindi. Each matching language is worth the same ranking bonus, so more selections means a
@@ -191,15 +206,43 @@ Returns `{ "ok": true }`.
 ```jsonc
 {
   "displayName": "Ashwath" | null,
-  "phone": "+9198…" | null,
+  "phone": "+9198…" | null,              // verified at sign-in, read-only
+  "designation": "Consultant" | null,
+  "contactPhone": "+91 98765…" | null,   // free text, what gets printed
+  "avatarKey": "avatars/…/….png" | null, // stable object key
+  "avatarUrl": "https://cdn…" | null,    // what you render
   "regionCode": "IN-MH" | null,
   "languages": ["hi", "mr"],
   "onboarded": true
 }
 ```
 
+Everything the overlay needs is in this one response, so fetch it once on launch and keep it —
+do not re-fetch it per share.
+
 **Call this on every cold start.** It answers "is the token valid" (401 if not) and "where do I
 route" (`onboarded`) in one request, and gives you everything the profile screen needs.
+
+### The logo — three steps, same as every upload here
+
+The user's logo or profile image, which the overlay can stamp onto a graphic. Optional.
+
+1. `POST /v1/me/avatar/upload-url` `{ mimeType, bytes }` → `{ storageKey, uploadUrl, expiresInSeconds }`
+2. `PUT` the file to `uploadUrl` with the **same** `content-type` you declared
+3. `POST /v1/me/avatar` `{ storageKey }` → `{ avatarKey, avatarUrl }`
+
+The bytes go straight to R2; the API never sees them. Step 3 is not a formality — the server does a
+HEAD on the object and rejects the confirm if nothing was uploaded, if it is not an image, or if it
+is bigger than claimed. **Do not skip it**, or the profile keeps its old logo and nothing tells you.
+
+- **Limits: 5 MB, and `image/jpeg`, `image/png` or `image/webp` only.** Both are checked at step 1,
+  so an oversized file fails before the user waits through an upload.
+- **Uploading again replaces the logo**, and deliberately gets a *new* key. Do not cache by "the
+  user's avatar" — cache by `avatarKey`, or a replaced logo will keep showing the old image from the
+  CDN edge for as long as it stays cached.
+- `DELETE /v1/me/avatar` removes it. `404` if there was none.
+- A `400` at step 3 saying *"Storage key does not belong to you"* means you sent a key from a
+  different account. That is a bug in your code, not something a user can hit.
 
 ---
 
@@ -462,7 +505,174 @@ and it drops out of the feed, so no new `imageUrl` is handed out for it.
 
 ---
 
-## 9. First-launch sequence
+## 9. Sharing: clean vs personalised
+
+Every feed post offers two actions. They differ only in what gets drawn on top of the image — the
+API call is the same one either way.
+
+| | Share | Customize & Share |
+|---|---|---|
+| Image | the clean original | original + the user's details |
+| API call | `POST /v1/content/{id}/download` | the same, with `customized: true` |
+| Counts as a download | yes | yes |
+
+```jsonc
+// Customize & Share
+POST /v1/content/{id}/download
+{ "source": "feed", "customized": true }
+```
+
+`customized` is the only way anyone can tell whether this feature gets used — the overlay is drawn
+on the device, so the server sees nothing else. Please set it honestly.
+
+### The overlay is entirely yours
+
+The server stores the *data* and never touches pixels. It returns no position, no font, no layout.
+There is nothing to fetch and nothing to wait for: everything you need is already in
+`GET /v1/me/profile`, which you fetched at launch.
+
+**Default placement is bottom-right, hardcoded in the app.** Designers do not define safe areas, so
+expect it to sit awkwardly on some artwork — that is exactly why the user can move it.
+
+### What may be shown, and what may be removed
+
+| Element | From | Rule |
+|---|---|---|
+| Name | `displayName` | **Mandatory.** Without it this is just Share. |
+| Designation | `designation` | Removable, and absent for many users |
+| Phone | `contactPhone` | Removable |
+| Logo | `avatarUrl` | Toggle on/off; absent when `avatarUrl` is null |
+
+The user can move and scale the **text block and the logo independently**, change colours, and pick
+from a bundled font list. None of that is persisted — it applies to the share in progress. If you
+later want "remember my layout", that is a new profile field and a backend change; ask first rather
+than inventing one.
+
+Guard the mandatory case in the UI: if `displayName` is null, either prompt for it or fall back to
+plain Share. Do not render an overlay with a blank line where the name should be.
+
+### Rendering
+
+Use `@shopify/react-native-skia`, and read the two warnings in §8's transform section — they apply
+here too.
+
+- **Compose and export at the source image's pixel dimensions**, not at the preview size. The
+  on-screen editor is a scaled view; the export must not be. Capturing the visible view is the most
+  common way this ships blurry.
+- **Bundle the fonts** with `expo-font`. Devanagari and Tamil shaping varies across Android OEMs,
+  and a name is the one thing that must not render as boxes.
+- **Fetch the full-resolution image for the export**, not the resized thumbnail you used in the
+  feed. Call the download endpoint, use the URL it returns.
+
+Then `makeImageSnapshot()` → `expo-media-library` to save, or `expo-sharing` for the share sheet.
+
+### One product warning
+
+`contactPhone` burned into an image is permanent and un-revocable once it is forwarded on WhatsApp.
+Show a preview before the share sheet opens, and consider defaulting the phone **off** for a
+first-time user. This audience will not think it through, and "why is my number on a stranger's
+status" is a support problem worth avoiding.
+
+---
+
+## 10. My Designs
+
+A private studio: the user composes something, it is saved to the backend, and they can come back to
+it. No review, no approval, no feed — these never become public content and never appear in anyone
+else's anything.
+
+### The shape
+
+Each design holds a **scene graph** (`designJson`), optionally **one image**, and a **flattened
+preview**.
+
+```jsonc
+POST /v1/me/designs
+{ "title": "Diwali poster", "designJson": { … } }
+
+// 200
+{ "id": "…", "title": "Diwali poster", "designJson": { … },
+  "sourceImageUrl": null, "previewUrl": null,
+  "createdAt": "…", "updatedAt": "…" }
+```
+
+**`designJson` is yours entirely.** The server stores it verbatim and never reads it, so its shape is
+whatever your editor needs. Two consequences: you can change it freely without a backend deploy, and
+nothing server-side will catch a malformed scene — version it yourself (`{ "version": 1, … }`) so
+old designs stay openable when the editor changes.
+
+It is capped at **256 KB**. Real scenes are a few KB; hitting this means embedding image data in the
+JSON, which is what `sourceImageKey` exists to avoid. Over the cap is a `400`.
+
+### Endpoints
+
+| | |
+|---|---|
+| `POST /v1/me/designs` | create |
+| `GET /v1/me/designs?cursor=&limit=` | gallery, most recently edited first |
+| `GET /v1/me/designs/{id}` | one design, with `designJson`, ready to edit |
+| `PATCH /v1/me/designs/{id}` | save an edit — `{ title?, designJson? }` |
+| `POST /v1/me/designs/{id}/upload-url` | sign an upload — `{ purpose, mimeType, bytes }` |
+| `POST /v1/me/designs/{id}/assets` | confirm it — `{ purpose, storageKey }` |
+
+`purpose` is `"source"` (the one image the design uses) or `"preview"` (the flattened render). Same
+three-step upload as the logo, same 10 MB and image-type limits.
+
+- **The gallery omits `designJson`** — fifty designs would be fifty scene graphs. Fetch one by id
+  when the user opens it.
+- **`PATCH` is a merge**, unlike the profile `PUT`. Omitted fields are left alone.
+- **Upload a new preview after every meaningful edit**, or the gallery keeps showing the old render.
+  Nothing regenerates it server-side.
+- **One image per design**, by design. Attaching a second replaces the first.
+
+### Two things to know
+
+**There is no delete.** Not an oversight — it is deliberate (see `docs/future-monetisation.md`).
+Do not build a delete button that fails; if the user needs to hide something, that is a product
+conversation, not a missing endpoint.
+
+**Another user's design is a `404`, not a `403`**, on every route that takes an id. Do not treat 404
+here as "something broke" — it means not yours, or never existed.
+
+---
+
+## 11. The profile screen
+
+### Download history — `GET /v1/me/downloads?cursor=&limit=`
+
+```jsonc
+{
+  "items": [{
+    "id": "…", "title": "Good Morning",
+    "designer": { "id": "…", "name": "…" },
+    "imageUrl": "https://cdn…" | null,
+    "lastDownloadedAt": "2026-08-30T…",
+    "timesDownloaded": 3
+  }],
+  "nextCursor": "…" | null
+}
+```
+
+**One entry per image, not per download** — `timesDownloaded` says how often. Ordered by most
+recently taken. Same opaque cursor rules as the feed.
+
+Content that was later removed still appears: it is the user's own history, and a hole in it would be
+stranger than an entry. Tapping through to a removed item will `409` on download — handle it as "no
+longer available".
+
+### Editing details
+
+Same `PUT /v1/me/profile` as onboarding. **Re-read the replace warning in §3** — this is where it
+does damage. Load the current profile into the form, and submit every field, not only the changed
+one, or you will silently wipe the user's designation.
+
+### Saved designs
+
+`GET /v1/me/designs` (§10).
+
+---
+
+## 12. First-launch sequence
 
 ```
 cold start
@@ -494,7 +704,7 @@ instant on a slow connection.
 
 ---
 
-## 10. Rate limits
+## 13. Rate limits
 
 | Endpoint | Limit |
 |---|---|
@@ -509,7 +719,113 @@ There is **no `Retry-After` header**. On a `429`, back off ~30 seconds and retry
 
 ---
 
-## 11. Things not to build
+## 14. Analytics — Google Analytics and Microsoft Clarity
+
+Your job to integrate, both client-side. No backend endpoint is involved and none is coming: the
+data goes straight from the device to Google and Microsoft, and **you read it in their dashboards**.
+There is nothing for us to build and nothing for you to POST to us.
+
+### Two corrections before you start
+
+**GA4 for a mobile app is the Firebase Analytics SDK**, not web gtag and not AdSense-style tags. The
+GA4 property *is* the Firebase project. You already have Firebase in the app for phone OTP, so this
+is the same project and close to free to add — use `@react-native-firebase/analytics`.
+
+**Microsoft Clarity ships an official React Native SDK.** Expect less than the web product: it gives
+you heatmaps and rage/dead-tap signal, not full session video. Treat it as "where do people get
+stuck", not as a recording tool.
+
+Both need a config plugin and a native rebuild, so they do not work in Expo Go. Plan for a
+development build.
+
+### What to instrument
+
+Enough to answer real questions, not everything:
+
+- **Screen views** on every screen. Almost free and the backbone of every funnel.
+- **Onboarding funnel** — started, each step completed, finished, abandoned. This is the highest-value
+  thing here: it tells you which field makes people quit.
+- **Sign-in method chosen** (`otp` / `google`) and whether it succeeded.
+- **Share vs Customize & Share**, and which overlay elements were kept or removed. Pair it with the
+  `customized` flag we store server-side.
+- **My Designs** — created, edited, image added, shared.
+- **Ad events** — interstitial shown, dismissed, failed to load. Without these you cannot tell an
+  ad-revenue problem from an ad-loading bug.
+
+### A hard rule: no PII
+
+Never send a name, phone number, email, `contactPhone` or logo URL to GA or Clarity. Not as an event
+parameter, not as a user property, not in a screen name. Use the opaque user id from
+`GET /v1/auth/me` if you need to correlate a user across sessions, and nothing else.
+
+Clarity masks text by default — **leave that on**, especially on the profile and overlay editor
+screens where the user's phone number is on screen. Turning masking off to debug a layout will
+record real users' phone numbers.
+
+### Which system answers which question
+
+Keep this straight or you will end up with two numbers that disagree and no idea which is right.
+
+- **Our `download_events`** is the source of truth for *designers*: how many downloads a post got,
+  from which region. Designers are paid attention on these numbers, so they are recorded
+  server-side, once, at the moment of the download.
+- **GA and Clarity** answer *product* questions: where users drop off, what they tap, what they never
+  find. They are sampled, client-side, and blockable.
+
+If GA's download count and ours disagree, ours is correct. Do not try to reconcile them.
+
+---
+
+## 15. Ads
+
+### First: it is AdMob, not AdSense
+
+**AdSense does not serve native mobile apps.** The product is **Google AdMob** — same account family,
+different SDK and different ad units. Use `react-native-google-mobile-ads`. Do not spend a day
+setting up AdSense.
+
+### The two placements
+
+**Interstitial before a download, customise or share.** Load it *ahead of time* — an interstitial
+requested at the moment of the tap will usually not be ready, and the user waits staring at nothing.
+Preload one, show it when it is available, and move on when it is not.
+
+**Anchored adaptive banner above the bottom navigation.** Reserve its height in the layout before it
+loads, or the content jumps under the user's finger as it arrives — which for this audience means
+mistaps, and mistaps on ads are exactly what gets an account suspended.
+
+### Four rules that protect the account
+
+These are not style preferences. Violating them risks limited ad serving or suspension.
+
+1. **Frequency-cap the interstitial.** An ad before *every single* download is both punishing for an
+   older user and a policy risk. Something like one per session milestone or one per few minutes,
+   never two back to back, and never on the very first action after install — let people see the app
+   work before you monetise them.
+2. **Never block the actual action.** If the ad fails to load or errors, the download proceeds
+   immediately. A user who cannot get their image because an ad broke will uninstall.
+3. **No ads on or near the design canvas.** A user dragging text with an ad nearby generates
+   accidental clicks, and accidental clicks are invalid traffic.
+4. **Use test ad unit IDs in development.** Tapping your own live ads is the fastest way to get an
+   AdMob account banned. Swap to real IDs only in release builds.
+
+### Before you can ship
+
+- **iOS App Tracking Transparency** prompt, or iOS ads serve untargeted and earn very little.
+- **A consent flow** — Google's UMP SDK. India's DPDP Act applies to this audience, and Play requires
+  a declared data-safety section that matches what the SDKs actually collect.
+- **A privacy policy URL**, required by both stores and by AdMob, naming Google, Microsoft Clarity
+  and Firebase.
+
+### Worth raising with the product owner
+
+Interstitials on *every* download will measurably hurt retention with older, less tech-confident
+users — the exact people this product is for. Worth agreeing a cap up front rather than discovering
+it in the retention numbers.
+
+---
+
+## 16. Things not to build
 
 Each of these is already handled, and duplicating it will cause bugs:
 
@@ -521,18 +837,22 @@ Each of these is already handled, and duplicating it will cause bugs:
 - **A download counter** — `downloadCount` on the item is authoritative; do not increment locally.
 - **Role handling** — every app user is `role: "user"`.
 
-## 12. Things that genuinely do not exist
+## 17. Things that genuinely do not exist
 
 So you do not go looking:
 
 - **No push notifications.** No device token registration endpoint.
-- **No favourites, collections, or history.** Downloads are recorded for analytics, but there is no
-  endpoint to read a user's own download history back.
+- **No favourites or collections.** Download history exists (§11); a "save for later" list does not.
 - **No following a designer**, no comments, no likes, no sharing counters.
 - **No account deletion endpoint.**
 - **No server-side image processing.** No resizing pipeline, no stored thumbnail variants, no format
-  conversion in the backend. Resizing happens at the CDN edge from query parameters you add — see
-  §8. There is nothing to request and nothing to wait for.
+  conversion, and no overlay compositing. Resizing happens at the CDN edge (§8) and overlays happen
+  on the device (§9). There is nothing to request and nothing to wait for.
+- **No deleting a saved design** (§10). Deliberate, not missing.
+- **No watermarks and no paywall.** Both are planned — see `docs/future-monetisation.md` — so avoid
+  designing them out of the way.
+- **No saved overlay layout.** Position, size and colour apply to the share in progress and are not
+  persisted. If it should be remembered, that is a backend change; ask.
 
 If the app needs any of these, they are backend work, not something to work around on the client.
 Ask.
@@ -542,5 +862,8 @@ Ask.
 ## Questions
 
 Open `/docs` first — it answers most field-level questions definitively. For anything about *why*
-something behaves as it does, `docs/specs/greetings-backend.md` is the full backend spec; §7 covers
-feed ranking and §12 covers limits and behaviour under load.
+something behaves as it does, `docs/specs/greetings-backend.md` is the full backend spec: §7 covers
+feed ranking, §12 limits and behaviour under load, and §16 the mobile-only surface (overlays, My
+Designs, history). `docs/future-monetisation.md` records what is deliberately deferred and why.
+
+If something here disagrees with `/docs`, `/docs` wins and this file is stale — please say so.

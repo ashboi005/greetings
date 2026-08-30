@@ -33,6 +33,7 @@ export function downloadRoutes(
 				contentId: params.id,
 				userId: user.id,
 				source: body?.source ?? "detail",
+				customized: body?.customized ?? false,
 				idempotencyKey: headers["idempotency-key"],
 				storage: storage(),
 				publicBaseUrl: options.publicBaseUrl,
@@ -45,6 +46,14 @@ export function downloadRoutes(
 					source: optionalEnum(DOWNLOAD_SOURCES, {
 						description: "Where the user tapped download; defaults to detail",
 					}),
+					customized: t.Optional(
+						t.Boolean({
+							description:
+								"True when the user personalised the image before sharing. " +
+								"The overlay is composed on the device, so this flag is the " +
+								"only signal that the feature is being used.",
+						}),
+					),
 				}),
 			),
 			headers: t.Object(

@@ -58,8 +58,34 @@ export const userProfiles = pgTable("user_profiles", {
 	userId: text("user_id")
 		.primaryKey()
 		.references(() => user.id, { onDelete: "cascade" }),
+	// Identity, not contact. Written only from a Firebase-verified sign-in, and
+	// unique because it is one of the two identifiers a role invite can match.
 	phone: text("phone").unique(),
 	displayName: text("display_name"),
+
+	/** Business title printed on a shared graphic, e.g. "Property Consultant". */
+	designation: text("designation"),
+
+	/**
+	 * The number printed on a shared graphic.
+	 *
+	 * Deliberately separate from `phone`, and deliberately not unique. This one
+	 * is typed by the user and never verified: it is a business contact detail,
+	 * the way a title is. Writing it into `phone` would put an unverified value
+	 * in the column used for identity matching and role invites, and would make
+	 * two users who share an office number collide on a unique constraint.
+	 */
+	contactPhone: text("contact_phone"),
+
+	/**
+	 * R2 key for the user's uploaded logo.
+	 *
+	 * Not `user.image`: that holds the Google or Firebase profile picture and is
+	 * overwritten on every sign-in, so a re-login would silently erase a logo the
+	 * user uploaded.
+	 */
+	avatarKey: text("avatar_key"),
+
 	regionCode: text("region_code").references(() => regions.code),
 	// Null until onboarding completes. Feed and download attribution both need
 	// a region, so this doubles as the "has this user finished onboarding" flag.
