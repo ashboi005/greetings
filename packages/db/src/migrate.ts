@@ -103,6 +103,44 @@ const pool = new Pool({
 	connectionTimeoutMillis: 15_000,
 });
 
+/**
+ * Something a person can act on, whatever was thrown.
+ *
+ * `error.message` alone is not enough, which this script learned the hard way
+ * twice. A `pg` connection failure carries an **empty** message — the useful
+ * part is on `code`, `syscall` and `address` — so printing only the message
+ * reproduced the exact silence this script was written to replace: "Migration
+ * failed:" followed by a blank line.
+ */
+function describeFailure(cause: unknown): string {
+	if (!(cause instanceof Error)) return String(cause);
+
+	const err = cause as Error & {
+		code?: string;
+		detail?: string;
+		hint?: string;
+		address?: string;
+		port?: number;
+		syscall?: string;
+	};
+
+	const parts = [err.message, err.detail, err.hint].filter(
+		(part): part is string => Boolean(part?.trim()),
+	);
+
+	if (err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT") {
+		parts.push(
+			`Could not reach the database (${err.code}) at ${err.address ?? "?"}:${err.port ?? "?"}.`,
+			"Is it running? For the local databases: bun run db:up",
+		);
+	} else if (err.code) {
+		parts.push(`SQLSTATE/code: ${err.code}`);
+	}
+
+	// Never return nothing. An empty report is worse than a stack trace.
+	return parts.length > 0 ? parts.join("\n") : (err.stack ?? String(err));
+}
+
 try {
 	console.log(`Migrating ${describe(url)}`);
 
@@ -118,7 +156,7 @@ try {
 	console.log("Migrations applied.");
 } catch (cause) {
 	console.error("\nMigration failed:");
-	console.error(cause instanceof Error ? cause.message : cause);
+	console.error(describeFailure(cause));
 
 	// 55P03 lock_not_available, 40P01 deadlock_detected. Both mean the schema
 	// change was fine and something else was in the way, which is a completely
