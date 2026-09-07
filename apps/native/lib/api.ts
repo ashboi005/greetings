@@ -1,0 +1,70 @@
+import { env } from "@greetings/env/native";
+import axios from "axios";
+import { PixelRatio } from "react-native";
+import { TOKEN_STORAGE_KEY, tokenStorage } from "./storage";
+
+export { TOKEN_STORAGE_KEY };
+
+export const api = axios.create({
+	baseURL:
+		env.EXPO_PUBLIC_SERVER_URL || "https://greetings-api.ashwathsoni.dev",
+	headers: {
+		"Content-Type": "application/json",
+	},
+});
+
+api.interceptors.request.use(async (config) => {
+	const token = await tokenStorage.getItem(TOKEN_STORAGE_KEY);
+	if (token) {
+		config.headers.Authorization = `Bearer ${token}`;
+	}
+	return config;
+});
+
+let onUnauthenticatedHandler: (() => void) | null = null;
+
+export function setUnauthenticatedHandler(handler: () => void) {
+	onUnauthenticatedHandler = handler;
+}
+
+api.interceptors.response.use(
+	(response) => response,
+	async (error) => {
+		if (error.response?.status === 401) {
+			await tokenStorage.deleteItem(TOKEN_STORAGE_KEY);
+			if (onUnauthenticatedHandler) {
+				onUnauthenticatedHandler();
+			}
+		}
+		return Promise.reject(error);
+	},
+);
+
+/**
+ * Transforms a raw CDN image URL using Cloudflare cdn-cgi prefix.
+ * Example format: https://cdn.example.com/cdn-cgi/image/width=400,format=auto/content/xyz.webp
+ */
+export function transformImageUrl(
+	imageUrl: string | null | undefined,
+	opts: string,
+): string | null {
+	if (!imageUrl) return null;
+	try {
+		const u = new URL(imageUrl);
+		return `${u.origin}/cdn-cgi/image/${opts}${u.pathname}`;
+	} catch {
+		return imageUrl;
+	}
+}
+
+export function getThumbnailUrl(
+	imageUrl: string | null | undefined,
+	width = 180,
+): string | null {
+	if (!imageUrl) return null;
+	const pixelWidth = Math.round(width * PixelRatio.get());
+	return transformImageUrl(
+		imageUrl,
+		`width=${pixelWidth},format=auto,quality=80,fit=scale-down`,
+	);
+}

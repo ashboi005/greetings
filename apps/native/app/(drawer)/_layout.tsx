@@ -30,12 +30,12 @@ function DrawerLayout() {
 				name="index"
 				options={{
 					headerTitle: "Home",
-					drawerLabel: ({ color, focused }) => (
+					drawerLabel: ({ color, focused }: { color: string; focused: boolean }) => (
 						<Text style={{ color: focused ? color : themeColorForeground }}>
 							Home
 						</Text>
 					),
-					drawerIcon: ({ size, color, focused }) => (
+					drawerIcon: ({ size, color, focused }: { size: number; color: string; focused: boolean }) => (
 						<Ionicons
 							name="home-outline"
 							size={size}
@@ -48,12 +48,12 @@ function DrawerLayout() {
 				name="(tabs)"
 				options={{
 					headerTitle: "Tabs",
-					drawerLabel: ({ color, focused }) => (
+					drawerLabel: ({ color, focused }: { color: string; focused: boolean }) => (
 						<Text style={{ color: focused ? color : themeColorForeground }}>
 							Tabs
 						</Text>
 					),
-					drawerIcon: ({ size, color, focused }) => (
+					drawerIcon: ({ size, color, focused }: { size: number; color: string; focused: boolean }) => (
 						<MaterialIcons
 							name="border-bottom"
 							size={size}
