@@ -1,24 +1,37 @@
-import React, { useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import {
-	View,
-	Text,
-	FlatList,
-	Pressable,
-	Image,
+	useInfiniteQuery,
+	useMutation,
+	useQueryClient,
+} from "@tanstack/react-query";
+import { useRouter } from "expo-router";
+import {
+	Button,
+	Input,
+	Label,
+	Spinner,
+	Surface,
+	TextField,
+	useToast,
+} from "heroui-native";
+import { useState } from "react";
+import {
 	ActivityIndicator,
-	RefreshControl,
+	FlatList,
+	Image,
 	Modal,
+	Pressable,
+	RefreshControl,
+	Text,
+	View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getDesigns, createDesign } from "@/lib/services";
+import { apiErrorMessage } from "@/lib/api";
+import { createDesign, getDesigns } from "@/lib/services";
 import type { DesignSummary } from "@/lib/types";
-import { Ionicons } from "@expo/vector-icons";
-import { Button, Surface, TextField, Label, Input, useToast, Spinner } from "heroui-native";
-import { useRouter } from "expo-router";
 
 export default function MyDesignsScreen() {
-	const router = useRouter();
+	const _router = useRouter();
 	const queryClient = useQueryClient();
 	const { toast } = useToast();
 
@@ -50,7 +63,7 @@ export default function MyDesignsScreen() {
 					elements: [],
 				},
 			}),
-		onSuccess: (newDesign) => {
+		onSuccess: (_newDesign) => {
 			setCreateModalVisible(false);
 			setNewTitle("");
 			queryClient.invalidateQueries({ queryKey: ["myDesigns"] });
@@ -59,10 +72,10 @@ export default function MyDesignsScreen() {
 				label: "Design created successfully!",
 			});
 		},
-		onError: (err: any) => {
+		onError: (cause: unknown) => {
 			toast.show({
 				variant: "danger",
-				label: err?.response?.data?.error?.message || "Failed to create design",
+				label: apiErrorMessage(cause, "Failed to create design"),
 			});
 		},
 	});
@@ -80,18 +93,26 @@ export default function MyDesignsScreen() {
 				}}
 				className="mb-4 w-full"
 			>
-				<Surface variant="secondary" className="rounded-2xl p-4 flex-row items-center gap-4">
-					<View className="w-16 h-16 rounded-xl bg-muted overflow-hidden items-center justify-center">
+				<Surface
+					variant="secondary"
+					className="flex-row items-center gap-4 rounded-2xl p-4"
+				>
+					<View className="h-16 w-16 items-center justify-center overflow-hidden rounded-xl bg-muted">
 						{item.previewUrl ? (
-							<Image source={{ uri: item.previewUrl }} style={{ width: "100%", height: "100%" }} />
+							<Image
+								source={{ uri: item.previewUrl }}
+								style={{ width: "100%", height: "100%" }}
+							/>
 						) : (
 							<Ionicons name="create-outline" size={28} color="#6366F1" />
 						)}
 					</View>
 
 					<View className="flex-1">
-						<Text className="font-semibold text-foreground text-base">{item.title}</Text>
-						<Text className="text-xs text-muted-foreground mt-1">
+						<Text className="font-semibold text-base text-foreground">
+							{item.title}
+						</Text>
+						<Text className="mt-1 text-muted-foreground text-xs">
 							Last updated: {new Date(item.updatedAt).toLocaleDateString()}
 						</Text>
 					</View>
@@ -104,15 +125,19 @@ export default function MyDesignsScreen() {
 
 	return (
 		<SafeAreaView className="flex-1 bg-background" edges={["top"]}>
-			<View className="px-4 py-3 border-b border-border/30 flex-row items-center justify-between">
+			<View className="flex-row items-center justify-between border-border/30 border-b px-4 py-3">
 				<View>
-					<Text className="text-xl font-bold text-foreground">My Designs Studio</Text>
-					<Text className="text-xs text-muted-foreground">Your private studio graphics</Text>
+					<Text className="font-bold text-foreground text-xl">
+						My Designs Studio
+					</Text>
+					<Text className="text-muted-foreground text-xs">
+						Your private studio graphics
+					</Text>
 				</View>
 
 				<Pressable
 					onPress={() => setCreateModalVisible(true)}
-					className="bg-primary p-2.5 rounded-full flex-row items-center gap-1"
+					className="flex-row items-center gap-1 rounded-full bg-primary p-2.5"
 				>
 					<Ionicons name="add" size={20} color="#FFF" />
 				</Pressable>
@@ -128,7 +153,12 @@ export default function MyDesignsScreen() {
 					renderItem={renderItem}
 					keyExtractor={(item, index) => `${item.id}-${index}`}
 					contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
-					refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />}
+					refreshControl={
+						<RefreshControl
+							refreshing={isRefetching}
+							onRefresh={() => refetch()}
+						/>
+					}
 					onEndReached={() => {
 						if (hasNextPage && !isFetchingNextPage) {
 							fetchNextPage();
@@ -136,13 +166,18 @@ export default function MyDesignsScreen() {
 					}}
 					onEndReachedThreshold={0.5}
 					ListEmptyComponent={
-						<View className="py-20 items-center">
+						<View className="items-center py-20">
 							<Ionicons name="create-outline" size={48} color="#D1D5DB" />
-							<Text className="text-foreground font-semibold mt-3">No saved designs</Text>
-							<Text className="text-xs text-muted-foreground mt-1 text-center px-6">
+							<Text className="mt-3 font-semibold text-foreground">
+								No saved designs
+							</Text>
+							<Text className="mt-1 px-6 text-center text-muted-foreground text-xs">
 								Create your first design project to customize graphics
 							</Text>
-							<Button onPress={() => setCreateModalVisible(true)} className="mt-4">
+							<Button
+								onPress={() => setCreateModalVisible(true)}
+								className="mt-4"
+							>
 								<Button.Label>+ Create New Design</Button.Label>
 							</Button>
 						</View>
@@ -152,9 +187,11 @@ export default function MyDesignsScreen() {
 
 			{/* Create Design Modal */}
 			<Modal visible={createModalVisible} transparent animationType="fade">
-				<View className="flex-1 bg-black/60 items-center justify-center p-5">
+				<View className="flex-1 items-center justify-center bg-black/60 p-5">
 					<Surface variant="secondary" className="w-full rounded-2xl p-6">
-						<Text className="text-lg font-bold text-foreground mb-4">Create New Design</Text>
+						<Text className="mb-4 font-bold text-foreground text-lg">
+							Create New Design
+						</Text>
 
 						<TextField className="mb-6">
 							<Label>Design Title</Label>

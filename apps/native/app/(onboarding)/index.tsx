@@ -1,11 +1,26 @@
-import React, { useState } from "react";
-import { View, Text, ScrollView, Pressable, ActivityIndicator } from "react-native";
-import { Button, Input, Label, Surface, TextField, useToast, Spinner } from "heroui-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
-import { getLanguages, getRegions, updateProfile } from "@/lib/services";
-import { useAuth } from "@/contexts/auth-context";
 import { useRouter } from "expo-router";
+import {
+	Button,
+	Input,
+	Label,
+	Spinner,
+	Surface,
+	TextField,
+	useToast,
+} from "heroui-native";
+import { useState } from "react";
+import {
+	ActivityIndicator,
+	Pressable,
+	ScrollView,
+	Text,
+	View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useAuth } from "@/contexts/auth-context";
+import { apiErrorMessage } from "@/lib/api";
+import { getLanguages, getRegions, updateProfile } from "@/lib/services";
 
 export default function OnboardingScreen() {
 	const { userProfile, refreshProfile } = useAuth();
@@ -13,15 +28,19 @@ export default function OnboardingScreen() {
 	const { toast } = useToast();
 
 	const [selectedLanguages, setSelectedLanguages] = useState<string[]>(
-		userProfile?.languages || []
+		userProfile?.languages || [],
 	);
 	const [selectedRegion, setSelectedRegion] = useState<string>(
-		userProfile?.regionCode || ""
+		userProfile?.regionCode || "",
 	);
-	const [displayName, setDisplayName] = useState(userProfile?.displayName || "");
-	const [designation, setDesignation] = useState(userProfile?.designation || "");
+	const [displayName, setDisplayName] = useState(
+		userProfile?.displayName || "",
+	);
+	const [designation, setDesignation] = useState(
+		userProfile?.designation || "",
+	);
 	const [contactPhone, setContactPhone] = useState(
-		userProfile?.contactPhone || userProfile?.phone || ""
+		userProfile?.contactPhone || userProfile?.phone || "",
 	);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -89,10 +108,11 @@ export default function OnboardingScreen() {
 				label: "Profile saved successfully!",
 			});
 			router.replace("/(drawer)/(tabs)");
-		} catch (err: any) {
-			const message =
-				err?.response?.data?.error?.message ||
-				"Failed to update profile. Please check your selections.";
+		} catch (cause) {
+			const message = apiErrorMessage(
+				cause,
+				"Failed to update profile. Please check your selections.",
+			);
 			toast.show({
 				variant: "danger",
 				label: message,
@@ -106,7 +126,9 @@ export default function OnboardingScreen() {
 		return (
 			<SafeAreaView className="flex-1 items-center justify-center bg-background">
 				<ActivityIndicator size="large" />
-				<Text className="mt-4 text-muted-foreground">Loading onboarding data...</Text>
+				<Text className="mt-4 text-muted-foreground">
+					Loading onboarding data...
+				</Text>
 			</SafeAreaView>
 		);
 	}
@@ -115,18 +137,21 @@ export default function OnboardingScreen() {
 		<SafeAreaView className="flex-1 bg-background">
 			<ScrollView className="flex-1 px-5 py-6">
 				<View className="mb-6">
-					<Text className="text-2xl font-bold text-foreground">Welcome to Greetings</Text>
-					<Text className="text-sm text-muted-foreground mt-1">
-						Personalise your feed by choosing your preferred languages and region.
+					<Text className="font-bold text-2xl text-foreground">
+						Welcome to Greetings
+					</Text>
+					<Text className="mt-1 text-muted-foreground text-sm">
+						Personalise your feed by choosing your preferred languages and
+						region.
 					</Text>
 				</View>
 
 				{/* 1. Language Selection */}
-				<Surface variant="secondary" className="rounded-2xl p-5 mb-6">
-					<Text className="text-base font-semibold text-foreground mb-1">
+				<Surface variant="secondary" className="mb-6 rounded-2xl p-5">
+					<Text className="mb-1 font-semibold text-base text-foreground">
 						1. Choose Languages
 					</Text>
-					<Text className="text-xs text-muted-foreground mb-4">
+					<Text className="mb-4 text-muted-foreground text-xs">
 						Select languages for the greetings you want to see (Multi-select)
 					</Text>
 
@@ -137,15 +162,17 @@ export default function OnboardingScreen() {
 								<Pressable
 									key={lang.code}
 									onPress={() => toggleLanguage(lang.code)}
-									className={`px-4 py-2.5 rounded-full border ${
+									className={`rounded-full border px-4 py-2.5 ${
 										isSelected
-											? "bg-primary border-primary"
-											: "bg-background border-border"
+											? "border-primary bg-primary"
+											: "border-border bg-background"
 									}`}
 								>
 									<Text
 										className={`font-medium ${
-											isSelected ? "text-primary-foreground font-bold" : "text-foreground"
+											isSelected
+												? "font-bold text-primary-foreground"
+												: "text-foreground"
 										}`}
 									>
 										{lang.nativeName} ({lang.name})
@@ -157,30 +184,36 @@ export default function OnboardingScreen() {
 				</Surface>
 
 				{/* 2. Region Selection */}
-				<Surface variant="secondary" className="rounded-2xl p-5 mb-6">
-					<Text className="text-base font-semibold text-foreground mb-1">
+				<Surface variant="secondary" className="mb-6 rounded-2xl p-5">
+					<Text className="mb-1 font-semibold text-base text-foreground">
 						2. Select Your Region / State
 					</Text>
-					<Text className="text-xs text-muted-foreground mb-4">
+					<Text className="mb-4 text-muted-foreground text-xs">
 						Used to show local regional greetings and festivals
 					</Text>
 
-					<ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row gap-2 py-1">
+					<ScrollView
+						horizontal
+						showsHorizontalScrollIndicator={false}
+						className="flex-row gap-2 py-1"
+					>
 						{regions?.map((reg) => {
 							const isSelected = selectedRegion === reg.code;
 							return (
 								<Pressable
 									key={reg.code}
 									onPress={() => setSelectedRegion(reg.code)}
-									className={`px-4 py-2.5 rounded-xl border mr-2 ${
+									className={`mr-2 rounded-xl border px-4 py-2.5 ${
 										isSelected
-											? "bg-primary border-primary"
-											: "bg-background border-border"
+											? "border-primary bg-primary"
+											: "border-border bg-background"
 									}`}
 								>
 									<Text
 										className={`font-medium ${
-											isSelected ? "text-primary-foreground font-bold" : "text-foreground"
+											isSelected
+												? "font-bold text-primary-foreground"
+												: "text-foreground"
 										}`}
 									>
 										{reg.name}
@@ -192,12 +225,13 @@ export default function OnboardingScreen() {
 				</Surface>
 
 				{/* 3. Personal Overlay Info */}
-				<Surface variant="secondary" className="rounded-2xl p-5 mb-8">
-					<Text className="text-base font-semibold text-foreground mb-1">
+				<Surface variant="secondary" className="mb-8 rounded-2xl p-5">
+					<Text className="mb-1 font-semibold text-base text-foreground">
 						3. Profile Details (Optional)
 					</Text>
-					<Text className="text-xs text-muted-foreground mb-4">
-						These details will be printed when you share graphics with your branding.
+					<Text className="mb-4 text-muted-foreground text-xs">
+						These details will be printed when you share graphics with your
+						branding.
 					</Text>
 
 					<View className="gap-4">
@@ -231,7 +265,11 @@ export default function OnboardingScreen() {
 					</View>
 				</Surface>
 
-				<Button onPress={handleSubmit} isDisabled={isSubmitting} className="mb-12">
+				<Button
+					onPress={handleSubmit}
+					isDisabled={isSubmitting}
+					className="mb-12"
+				>
 					{isSubmitting ? (
 						<Spinner size="sm" color="default" />
 					) : (

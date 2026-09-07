@@ -155,10 +155,11 @@ A Dockerfile deployment gives you the API only. The `jobs` service from
 
 ### Configuration that matters in production
 
-`apps/server/.env.example` documents everything. Three are easy to get wrong:
+`apps/server/.env.example` documents everything. Four are easy to get wrong:
 
 | Variable | Default | Why you would change it |
 |---|---|---|
+| `FIREBASE_PROJECT_ID` | unset | **Mobile sign-in does not work without it.** The server still boots deliberately, so unrelated work is not blocked, and `POST /v1/auth/firebase` reports the gap instead. It must name the same Firebase project as the app's config files, or every token fails the `iss`/`aud` check and sign-in is a flat `401`. See [docs/firebase-setup.md](docs/firebase-setup.md). |
 | `TRUST_PROXY_HEADERS` | `false` | **Set to `true` only if something in front of this server overwrites `x-forwarded-for`.** Left off behind a proxy, every request looks like it comes from the proxy. Turned on without one, any client can evade per-address rate limits by changing a header. |
 | `DATABASE_POOL_MAX` | `10` | Sized for four cores. More connections is not more throughput — past about twice the core count, backends contend for the same CPUs. Requests queue at the pool by design. |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | `15000` | The ceiling for a query somebody is waiting on. Batch jobs raise it for their own transaction; this is not the knob for them. |
@@ -214,7 +215,17 @@ bun run dev
 ```
 
 Web on [http://localhost:3001](http://localhost:3001), API on
-[http://localhost:3000](http://localhost:3000), mobile through Expo Go.
+[http://localhost:3000](http://localhost:3000).
+
+The mobile app does **not** run in Expo Go — Firebase auth is a native module,
+so it needs `bunx expo prebuild` and a dev client. Sign-in offers phone OTP,
+email and password, and Google, all through Firebase. Setup is two files
+dropped into `apps/native/` — `google-services.json` and
+`GoogleService-Info.plist` — which `app.config.ts` reads directly, so there
+are no Firebase environment variables to keep in sync. Phone needs extra
+per-platform work before it sends a real SMS and runs against Firebase's test
+numbers until then; email and Google work today. See
+[docs/firebase-setup.md](docs/firebase-setup.md).
 
 ## The web panels
 
@@ -223,8 +234,15 @@ Better Auth, with **public sign-up disabled**: a panel account exists only
 because a super admin created it from `/admin/people`. Google OAuth remains
 available and is registered only when `GOOGLE_CLIENT_ID` and
 `GOOGLE_CLIENT_SECRET` are both set, so a deployment that does not want it does
-not have to register an app with Google. Mobile readers are a separate path
-entirely — Firebase phone OTP, never these screens.
+not have to register an app with Google.
+
+**Mobile readers are a separate path entirely — Firebase, never these screens.**
+The app has its own email-and-password option, but it is *Firebase's*, not this
+one: two account systems that look alike and share no credentials. The split is enforced, not conventional: the app carries no Better
+Auth client, and `/admin/people` refuses to create a password account for the
+`user` role, so an app user has no credential these screens could accept. What
+the two share is the session store, which is what makes an app user revocable —
+see §2.1 of [the spec](docs/specs/greetings-backend.md).
 
 | Route | Who | What |
 |---|---|---|

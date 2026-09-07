@@ -21,6 +21,12 @@ Put it in `EXPO_PUBLIC_SERVER_URL` — `packages/env/src/native.ts` already expe
 `POST /v1/auth/firebase` and the three reference lists in §3, which are public. The app has no
 cookie jar and needs none. Everything the panels do with cookies is irrelevant to you.
 
+**Firebase is the app's only login.** Three methods — phone OTP, email and password, Google — and
+all three are Firebase's. There is **no Better Auth client in the app**; the panels have one, you do
+not. Note that means the app's email-and-password sign-in is Firebase's, not the panels': they are
+separate account systems that happen to look alike. If you find `better-auth` in a diff touching
+`apps/native`, it is a mistake. See §2.
+
 **The API never returns image bytes.** Not on any endpoint. Images are served from a Cloudflare CDN
 in front of R2, and the API only ever hands you URLs. This keeps image traffic off the server
 entirely. **Displaying and saving use different URLs — read §8 before building the feed.**
@@ -51,13 +57,17 @@ the offending field — that is the one to read when a request mysteriously fail
 
 ## 2. Authentication
 
-The server does not implement phone OTP. **Firebase does**, on the device, and then you trade the
+The server implements no sign-in of its own. **Firebase does**, on the device, and then you trade the
 result for a session here. The server's only job is verifying that the Firebase token is genuine.
+
+**Three methods, one exchange.** Phone OTP, email and password, and Google. They differ only on the
+device; all three end in a Firebase ID token, and from there the path is identical.
 
 ```
 ┌─ device ──────────────────────┐        ┌─ our API ──────────────────┐
-│ Firebase phone or Google      │        │                            │
-│ sign-in completes             │        │                            │
+│ phone OTP ─┐                  │        │                            │
+│ email/pw ──┼─ Firebase        │        │                            │
+│ Google ────┘  sign-in         │        │                            │
 │   ↓                           │        │                            │
 │ Firebase ID token ────────────┼───────▶│ POST /v1/auth/firebase     │
 │                               │        │  verifies signature vs     │
@@ -68,6 +78,103 @@ result for a session here. The server's only job is verifying that the Firebase 
 │ store it, send as Bearer      │        │                            │
 └───────────────────────────────┘        └────────────────────────────┘
 ```
+
+| Method | State today |
+|---|---|
+| Email and password | Complete. Requires a confirmed address — see below |
+| Google | Complete. Needs the Google provider enabled in Firebase, then both config files re-downloaded |
+| Phone OTP | Complete in code, but **only test numbers work** until the per-platform verification is set up — `TODO(phone-native-setup)` in `lib/firebase.ts`, steps in firebase-setup.md §2.5–2.6 |
+
+The Firebase ID token is used **once**, for this exchange, and then discarded. It is not the bearer
+token — do not send it on other requests, and do not try to refresh it. What you keep is the session
+token this endpoint returns.
+
+That indirection is deliberate. A Firebase ID token expires after an hour and cannot be withdrawn
+early, whereas a session issued here is revoked the moment an admin changes someone's role or resets
+their password. It also means the app never needs a refresh loop.
+
+### Which SDK, and what that costs you
+
+`@react-native-firebase/app`, `@react-native-firebase/auth` and
+`@react-native-google-signin/google-signin` — native modules, so:
+
+- **The app cannot run in Expo Go.** Use `bunx expo prebuild` and a dev client.
+- Two config files must be present before a build: `apps/native/google-services.json` and
+  `apps/native/GoogleService-Info.plist`. `expo prebuild` fails without them.
+- `apps/native/.env` takes `EXPO_PUBLIC_SERVER_URL` and nothing else. There are **no Firebase
+  variables at all**: `app.config.ts` reads what Google sign-in needs straight out of the two
+  config files, so there is no copy to keep in sync.
+
+The JS `firebase` package is the wrong choice here: its phone flow is built on reCAPTCHA in a
+WebView. **[docs/firebase-setup.md](./firebase-setup.md) is the full runbook** — console steps,
+signing fingerprints, APNs, and the test numbers you should be developing against.
+
+### The device half
+
+`apps/native/lib/firebase.ts` is the only file that talks to Firebase:
+
+```ts
+// phone
+toE164("98765 43210")             // → "+919876543210", or null if unusable
+sendVerificationCode(e164)        // → { phoneNumber, confirm(code) → idToken }
+
+// email
+signInWithEmail(email, password)  // → idToken, or throws EmailNotVerifiedError
+signUpWithEmail(email, password)  // creates, mails the link, signs out again
+resendEmailVerification(email, password)
+sendPasswordReset(email)
+
+// google
+isGoogleSignInAvailable()         // false when the web client ID is unset
+signInWithGoogle()                // → idToken, or null if the picker was dismissed
+
+signOutOfFirebase()
+```
+
+Every one of those ID tokens goes to the same place: `signInWithFirebaseToken` in
+`contexts/auth-context.tsx`. Failures arrive as `FirebaseAuthError` with a message already fit to
+show someone — Firebase's own `auth/*` codes belong in a log, not on a screen. Use
+`authErrorMessage` from `lib/auth-errors.ts` in a screen; it covers both these and the API's
+envelope.
+
+The UI is one component per method under `components/auth/`, with `app/(auth)/sign-in.tsx` as a
+shell that switches between them. They share nothing but the token they produce.
+
+**Three things that look optional and are not.**
+
+`toE164` defaults a bare 10-digit number to +91, because people type their number the way they say
+it and Firebase rejects anything that is not E.164. An explicit `+` always wins, so someone abroad
+is never rewritten.
+
+`signInWithGoogle()` resolving to **null means the picker was dismissed** — the most common way it
+ends. Do not show that as an error.
+
+`signOutOfFirebase` runs on every sign-out, because a lingering Firebase `currentUser` can mint a
+fresh ID token that the exchange would honour — a signed-out app quietly signing itself back in. It
+signs out of Google too, or the next sign-in silently reuses the same account without showing the
+picker, which reads as "I can't switch accounts".
+
+### Email sign-in requires a confirmed address
+
+`signUpWithEmail` creates the account, has Firebase mail the link, and signs straight back out. No
+session is issued until the address is confirmed; `signInWithEmail` throws `EmailNotVerifiedError`
+until then, which the screen turns into "check your inbox" with a resend rather than a red field.
+
+This is load-bearing, not politeness. The server stores `<firebase-uid>@firebase.placeholder` for
+any identity whose email it cannot trust and only links accounts on a verified one — that stops
+anyone claiming someone else's account by signing up with their address. An unconfirmed account
+would therefore land with a placeholder email and be unfindable by the address its owner typed.
+
+Firebase sends the mail, so it costs us no email infrastructure.
+
+### Development without an SMS
+
+A dev build's sign-in screen has a *Development only* panel that takes a pasted Firebase ID token
+straight to the exchange. It is compiled out of release builds — `__DEV__` is statically false, so
+the component is dropped rather than hidden behind a flag.
+
+Prefer Firebase's **test phone numbers** (firebase-setup.md §2.7) for day-to-day work: a fixed code,
+no SMS, works in the simulator, costs no quota.
 
 ### `POST /v1/auth/firebase`
 
@@ -94,26 +201,51 @@ Notes that matter:
   `onboarded: false`, and sending them to the feed would show them a bare global feed forever.
 - **Phone-only users have a placeholder email**, shaped `<firebase-uid>@firebase.placeholder`. It is
   a real value in a required field, not a bug. Never display it. Use `displayName` from the profile,
-  falling back to the phone number.
+  falling back to the phone number. Email and Google users have their real address, because both are
+  verified before they get this far.
 - **`role` will be `user`** for everyone in the app. Designers and admins use the web panels; the
-  app has no screens for them.
-- **Accounts link automatically.** Signing in with Google and later with the same phone number
-  resolves to one account, so you do not need an account-linking flow.
+  app has no screens for them. The panels' own login cannot produce a `user` account — the route
+  that creates password accounts refuses that role — so the two populations cannot cross over.
+- **Accounts link automatically.** A verified email or a phone number matching an existing account
+  resolves to one user, so you do not need an account-linking flow. Someone who signs up by email
+  and later taps *Continue with Google* with the same address gets their existing account, role and
+  history — not a second one.
 
 ### Keeping the session
 
-Store the token in secure storage (`expo-secure-store`). It is an opaque database key, not a JWT —
-do not try to decode it for an expiry.
+Store the token in secure storage (`expo-secure-store`) — `lib/storage.ts` does, with a memory
+fallback so the web target does not crash. It is an opaque database key, not a JWT; do not try to
+decode it for an expiry.
 
-Expiry is not explicitly configured, so it is Better Auth's default and should be treated as an
+Expiry is not explicitly configured, so it is the session store's default and should be treated as an
 implementation detail. **Handle it operationally instead:** a `401` with code `UNAUTHENTICATED` on
-*any* request means the session is gone. Clear the stored token and route to sign-in. A single
-interceptor doing that is the whole session-management story.
+*any* request means the session is gone. Clear the stored token and route to sign-in. The axios
+response interceptor in `lib/api.ts` does exactly that, and it is the whole session-management story.
 
 Sessions are also revoked server-side when an admin changes a user's role or resets a password, so
 `401` is not always an expiry — treat all cases the same.
 
-**Signing out** is discarding the stored token. There is no endpoint you need.
+**But only a 401 means that.** A timeout or a 500 on the cold-start profile read means the network
+is bad, not that the session died; signing the user out there logs people out for being on a train.
+`readProfile` in `contexts/auth-context.tsx` separates the two, and only the first signs out.
+
+**Signing out** is discarding the stored token, signing out of Firebase, and clearing the react-query
+cache. There is no endpoint you need. Skipping the cache clear is how the next person to sign in on
+that device sees the previous user's feed, downloads and designs.
+
+### Where the redirects live
+
+One place: the guard effect in `contexts/auth-context.tsx`. Screens do not navigate on sign-in or
+sign-out. Three inputs decide it — is there a token, is the profile onboarded, has the root navigator
+mounted — and a screen holding only one of them will guess wrong about the others.
+
+| State | Lands on |
+|---|---|
+| No token | `/(auth)/sign-in` |
+| Token, `onboarded: false` | `/(onboarding)` |
+| Token, onboarded, sitting in `(auth)` or finished onboarding | `/(drawer)/(tabs)` |
+
+If you need a new gated route group, add it to that table and that effect, not to a screen.
 
 ### `GET /v1/auth/me`
 
@@ -697,6 +829,10 @@ cold start
                                                    ▼
                                                  feed
 ```
+
+Note that only the `401` branch clears the token. If that profile read fails any *other* way —
+timeout, 500, no connectivity — keep the session and let the screens report their own failure. See
+§2, "Keeping the session".
 
 `GET /v1/regions` and `GET /v1/languages` need no token, so prefetch them on the splash screen
 rather than after sign-in — they are cached and tiny, and having them ready makes onboarding feel

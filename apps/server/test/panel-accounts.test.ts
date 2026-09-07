@@ -217,6 +217,22 @@ describe("a super admin creating panel accounts", () => {
 		expect(res.status).toBe(422);
 	});
 
+	test("refuses to mint an app user a password account", async () => {
+		const cookie = await bootstrap();
+		const res = await post("/v1/admin/accounts", cookie, {
+			email: "shopper@example.com",
+			name: "Shopper",
+			password: STRONG,
+			role: "user",
+		});
+
+		// App users are authenticated by Firebase and hold no password
+		// credential. One created here would be a second way into the same
+		// person — through the panel door — and every panel route rejects the
+		// role anyway, so the account could only ever be a liability.
+		expect(res.status).toBe(422);
+	});
+
 	test("records the grant in the role change log", async () => {
 		const cookie = await bootstrap();
 		await post("/v1/admin/accounts", cookie, {

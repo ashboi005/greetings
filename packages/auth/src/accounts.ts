@@ -11,6 +11,13 @@
  * that provider id, so it is a convention this has to match exactly rather than
  * a name of our choosing.
  *
+ * Only panel roles belong here. An app user is authenticated by Firebase and
+ * has no password credential at all, which is what keeps the two front doors
+ * separate; giving one a `credential` row would let the same person in through
+ * the panels as well. Callers enforce that — `WEB_ROLES` in the admin route's
+ * schema — because the role type this takes is shared with the whole system and
+ * narrowing it here would not be worth a package-crossing type.
+ *
  * There is no email transport in this system, which is why `setPassword` exists.
  * A designer who forgets their password cannot be sent a reset link, so a super
  * admin sets a new one and tells them. That is a deliberate trade for not owning

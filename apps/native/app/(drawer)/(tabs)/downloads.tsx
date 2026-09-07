@@ -1,21 +1,20 @@
-import React from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
+import { Surface } from "heroui-native";
 import {
-	View,
-	Text,
-	FlatList,
-	Pressable,
-	Image,
 	ActivityIndicator,
+	FlatList,
+	Image,
+	Pressable,
 	RefreshControl,
+	Text,
+	View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { getDownloadHistory } from "@/lib/services";
 import { getThumbnailUrl } from "@/lib/api";
+import { getDownloadHistory } from "@/lib/services";
 import type { DownloadHistoryItem } from "@/lib/types";
-import { useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { Surface } from "heroui-native";
 
 export default function DownloadsScreen() {
 	const router = useRouter();
@@ -55,22 +54,31 @@ export default function DownloadsScreen() {
 				}
 				className="mb-3"
 			>
-				<Surface variant="secondary" className="rounded-2xl p-3 flex-row items-center gap-3">
-					<View className="w-16 h-16 rounded-xl bg-muted overflow-hidden items-center justify-center">
+				<Surface
+					variant="secondary"
+					className="flex-row items-center gap-3 rounded-2xl p-3"
+				>
+					<View className="h-16 w-16 items-center justify-center overflow-hidden rounded-xl bg-muted">
 						{thumbUri ? (
-							<Image source={{ uri: thumbUri }} style={{ width: "100%", height: "100%" }} />
+							<Image
+								source={{ uri: thumbUri }}
+								style={{ width: "100%", height: "100%" }}
+							/>
 						) : (
 							<Ionicons name="image-outline" size={24} color="#9CA3AF" />
 						)}
 					</View>
 
 					<View className="flex-1">
-						<Text className="font-semibold text-foreground text-sm">{item.title}</Text>
-						<Text className="text-xs text-muted-foreground mt-0.5">
+						<Text className="font-semibold text-foreground text-sm">
+							{item.title}
+						</Text>
+						<Text className="mt-0.5 text-muted-foreground text-xs">
 							{item.designer?.name || "Designer"}
 						</Text>
-						<Text className="text-xs text-muted-foreground mt-1">
-							Downloaded {item.timesDownloaded} time{item.timesDownloaded > 1 ? "s" : ""}
+						<Text className="mt-1 text-muted-foreground text-xs">
+							Downloaded {item.timesDownloaded} time
+							{item.timesDownloaded > 1 ? "s" : ""}
 						</Text>
 					</View>
 
@@ -82,9 +90,13 @@ export default function DownloadsScreen() {
 
 	return (
 		<SafeAreaView className="flex-1 bg-background" edges={["top"]}>
-			<View className="px-4 py-3 border-b border-border/30">
-				<Text className="text-xl font-bold text-foreground">Download History</Text>
-				<Text className="text-xs text-muted-foreground mt-0.5">Your downloaded greetings</Text>
+			<View className="border-border/30 border-b px-4 py-3">
+				<Text className="font-bold text-foreground text-xl">
+					Download History
+				</Text>
+				<Text className="mt-0.5 text-muted-foreground text-xs">
+					Your downloaded greetings
+				</Text>
 			</View>
 
 			{isLoading ? (
@@ -98,7 +110,10 @@ export default function DownloadsScreen() {
 					keyExtractor={(item, index) => `${item.id}-${index}`}
 					contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
 					refreshControl={
-						<RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
+						<RefreshControl
+							refreshing={isRefetching}
+							onRefresh={() => refetch()}
+						/>
 					}
 					onEndReached={() => {
 						if (hasNextPage && !isFetchingNextPage) {
@@ -107,10 +122,12 @@ export default function DownloadsScreen() {
 					}}
 					onEndReachedThreshold={0.5}
 					ListEmptyComponent={
-						<View className="py-20 items-center">
+						<View className="items-center py-20">
 							<Ionicons name="download-outline" size={48} color="#D1D5DB" />
-							<Text className="text-foreground font-semibold mt-3">No downloads yet</Text>
-							<Text className="text-xs text-muted-foreground mt-1">
+							<Text className="mt-3 font-semibold text-foreground">
+								No downloads yet
+							</Text>
+							<Text className="mt-1 text-muted-foreground text-xs">
 								Greetings you download will appear here
 							</Text>
 						</View>

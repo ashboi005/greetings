@@ -13,16 +13,12 @@
 
 import { createPanelAccount, setPanelPassword } from "@greetings/auth/accounts";
 import { db } from "@greetings/db";
-import {
-	roleChangeLog,
-	USER_ROLES,
-	user as userTable,
-} from "@greetings/db/schema";
+import { roleChangeLog, user as userTable } from "@greetings/db/schema";
 import { eq } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { conflict, notFound } from "../../lib/errors";
 import { invalidateUser } from "../../lib/session-cache";
-import { authGuard, requireUser } from "../auth/session";
+import { authGuard, requireUser, WEB_ROLES } from "../auth/session";
 
 /**
  * Long enough that a hurried administrator cannot pick something guessable.
@@ -83,7 +79,13 @@ export function adminAccountRoutes() {
 						maxLength: 200,
 						description: `At least ${MIN_PASSWORD_LENGTH} characters`,
 					}),
-					role: t.UnionEnum(USER_ROLES),
+					// Panel roles only. `user` is accepted nowhere here: an app user's
+					// identity comes from Firebase, and minting them a password
+					// account would create a second way into the same person —
+					// through the panel door, which is exactly the split this
+					// system keeps. Every route rejects `user` regardless, so such
+					// an account could only ever be a liability.
+					role: t.UnionEnum(WEB_ROLES),
 					reason: t.Optional(t.String({ maxLength: 500 })),
 				}),
 				detail: {
@@ -92,7 +94,8 @@ export function adminAccountRoutes() {
 					description:
 						"The only way a designer or admin account is created — public " +
 						"sign-up is disabled. Tell the person their password out of " +
-						"band; nothing here can email it to them.",
+						"band; nothing here can email it to them. App users are not " +
+						"created here; they arrive by signing in with Firebase.",
 				},
 			},
 		)

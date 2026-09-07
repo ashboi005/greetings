@@ -1,22 +1,21 @@
-import React, { useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
+import { Surface } from "heroui-native";
 import {
-	View,
-	Text,
-	FlatList,
-	Pressable,
-	RefreshControl,
 	ActivityIndicator,
 	Dimensions,
+	FlatList,
 	Image,
+	Pressable,
+	RefreshControl,
+	Text,
+	View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { apiErrorMessage, getThumbnailUrl } from "@/lib/api";
 import { getFeed } from "@/lib/services";
-import { getThumbnailUrl } from "@/lib/api";
 import type { FeedItem } from "@/lib/types";
-import { useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { Surface } from "heroui-native";
 
 const { width } = Dimensions.get("window");
 const COLUMN_WIDTH = (width - 36) / 2;
@@ -63,8 +62,14 @@ export default function FeedScreen() {
 				className="mb-4"
 				style={{ width: COLUMN_WIDTH }}
 			>
-				<Surface variant="secondary" className="rounded-2xl overflow-hidden shadow-sm border border-border/40">
-					<View style={{ width: COLUMN_WIDTH, height: COLUMN_WIDTH * 1.2 }} className="bg-muted relative">
+				<Surface
+					variant="secondary"
+					className="overflow-hidden rounded-2xl border border-border/40 shadow-sm"
+				>
+					<View
+						style={{ width: COLUMN_WIDTH, height: COLUMN_WIDTH * 1.2 }}
+						className="relative bg-muted"
+					>
 						{thumbUri ? (
 							<Image
 								source={{ uri: thumbUri }}
@@ -74,22 +79,29 @@ export default function FeedScreen() {
 						) : (
 							<View className="flex-1 items-center justify-center p-4">
 								<Ionicons name="image-outline" size={40} color="#9CA3AF" />
-								<Text className="text-xs text-muted-foreground text-center mt-2">No preview</Text>
+								<Text className="mt-2 text-center text-muted-foreground text-xs">
+									No preview
+								</Text>
 							</View>
 						)}
 					</View>
 
 					<View className="p-3">
-						<Text className="font-semibold text-foreground text-sm" numberOfLines={1}>
+						<Text
+							className="font-semibold text-foreground text-sm"
+							numberOfLines={1}
+						>
 							{item.title}
 						</Text>
-						<View className="flex-row items-center justify-between mt-1">
-							<Text className="text-xs text-muted-foreground" numberOfLines={1}>
+						<View className="mt-1 flex-row items-center justify-between">
+							<Text className="text-muted-foreground text-xs" numberOfLines={1}>
 								{item.designer?.name || "Designer"}
 							</Text>
 							<View className="flex-row items-center gap-1">
 								<Ionicons name="download-outline" size={12} color="#6B7280" />
-								<Text className="text-xs text-muted-foreground">{item.downloadCount}</Text>
+								<Text className="text-muted-foreground text-xs">
+									{item.downloadCount}
+								</Text>
 							</View>
 						</View>
 					</View>
@@ -100,8 +112,10 @@ export default function FeedScreen() {
 
 	return (
 		<SafeAreaView className="flex-1 bg-background" edges={["top"]}>
-			<View className="px-4 py-3 flex-row items-center justify-between border-b border-border/30">
-				<Text className="text-xl font-bold text-foreground">Greetings Feed</Text>
+			<View className="flex-row items-center justify-between border-border/30 border-b px-4 py-3">
+				<Text className="font-bold text-foreground text-xl">
+					Greetings Feed
+				</Text>
 				<Ionicons name="sparkles" size={20} color="#6366F1" />
 			</View>
 
@@ -113,12 +127,17 @@ export default function FeedScreen() {
 			) : isError ? (
 				<View className="flex-1 items-center justify-center p-6">
 					<Ionicons name="alert-circle-outline" size={48} color="#EF4444" />
-					<Text className="text-lg font-semibold text-foreground mt-3">Failed to load feed</Text>
-					<Text className="text-sm text-muted-foreground text-center mt-1 mb-4">
-						{(error as any)?.response?.data?.error?.message || (error as any)?.message || "Something went wrong"}
+					<Text className="mt-3 font-semibold text-foreground text-lg">
+						Failed to load feed
 					</Text>
-					<Pressable onPress={() => refetch()} className="bg-primary px-6 py-2.5 rounded-full">
-						<Text className="text-primary-foreground font-medium">Retry</Text>
+					<Text className="mt-1 mb-4 text-center text-muted-foreground text-sm">
+						{apiErrorMessage(error, "Something went wrong")}
+					</Text>
+					<Pressable
+						onPress={() => refetch()}
+						className="rounded-full bg-primary px-6 py-2.5"
+					>
+						<Text className="font-medium text-primary-foreground">Retry</Text>
 					</Pressable>
 				</View>
 			) : (
@@ -130,7 +149,10 @@ export default function FeedScreen() {
 					columnWrapperStyle={{ justifyContent: "space-between" }}
 					contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
 					refreshControl={
-						<RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
+						<RefreshControl
+							refreshing={isRefetching}
+							onRefresh={() => refetch()}
+						/>
 					}
 					onEndReached={() => {
 						if (hasNextPage && !isFetchingNextPage) {
@@ -140,13 +162,13 @@ export default function FeedScreen() {
 					onEndReachedThreshold={0.5}
 					ListFooterComponent={
 						isFetchingNextPage ? (
-							<View className="py-4 items-center">
+							<View className="items-center py-4">
 								<ActivityIndicator size="small" />
 							</View>
 						) : null
 					}
 					ListEmptyComponent={
-						<View className="py-12 items-center">
+						<View className="items-center py-12">
 							<Text className="text-muted-foreground">No greetings found</Text>
 						</View>
 					}

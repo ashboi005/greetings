@@ -3,7 +3,7 @@ const { withUniwindConfig } = require("uniwind/metro");
 const {
 	wrapWithReanimatedMetroConfig,
 } = require("react-native-reanimated/metro-config");
-const path = require("path");
+const path = require("node:path");
 
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, "../..");
@@ -21,10 +21,7 @@ config.resolver.nodeModulesPaths = [
 ];
 
 // 3. Exclude web app & server from file watcher
-config.resolver.blockList = [
-	/apps\/web\/.*/,
-	/apps\/server\/.*/,
-];
+config.resolver.blockList = [/apps\/web\/.*/, /apps\/server\/.*/];
 
 const uniwindConfig = withUniwindConfig(wrapWithReanimatedMetroConfig(config), {
 	cssEntryFile: "./global.css",

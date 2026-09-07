@@ -1,4 +1,3 @@
-import { expo } from "@better-auth/expo";
 import { createDb } from "@greetings/db";
 import * as schema from "@greetings/db/schema";
 import { env } from "@greetings/env/server";
@@ -9,10 +8,22 @@ import { bearer } from "better-auth/plugins";
 /**
  * Authentication configuration (spec §11).
  *
- * Two front doors, one session model:
- *   - Mobile users sign in through Firebase; apps/server exchanges the Firebase
- *     ID token for a session here (Better Auth has no Firebase provider).
- *   - Designers, admins and super admins sign in on the web with Google.
+ * One session model, but only one way in through Better Auth itself:
+ *   - Designers, admins and super admins sign in here, on the web, with Google
+ *     or a password a super admin gave them.
+ *   - Mobile users never touch a Better Auth sign-in route. Firebase
+ *     authenticates them on the device and apps/server exchanges the resulting
+ *     ID token for a session (Better Auth has no Firebase provider).
+ *
+ * So Better Auth is the panels' identity provider and the app's *session store*
+ * — nothing more. The app holds a bearer token minted by that exchange and has
+ * no Better Auth client, no cookie jar and no credential of its own.
+ *
+ * Keeping the session store shared, rather than letting the app carry Firebase
+ * ID tokens directly, is what makes an app user revocable: a role change or a
+ * password reset deletes their `session` rows and the next request fails. A
+ * Firebase ID token cannot be withdrawn that way without firebase-admin, which
+ * spec §2.1 deliberately avoided.
  *
  * Email and password is on, for the panels only, and public sign-up is off.
  *
@@ -38,12 +49,11 @@ export function createAuth() {
 			provider: "pg",
 			schema: schema,
 		}),
-		trustedOrigins: [
-			env.CORS_ORIGIN,
-			"greetings://",
-			"exp://",
-			"http://localhost:8081",
-		],
+		// The web panel, and nothing else. The mobile scheme and the Expo dev
+		// server used to be here to serve the Better Auth Expo client; that client
+		// is gone, so trusting `greetings://` and `exp://` would only keep a
+		// deep-link redirect target open for an origin that no longer calls.
+		trustedOrigins: [env.CORS_ORIGIN],
 		emailAndPassword: {
 			enabled: true,
 			// The security boundary. With sign-up disabled there is no public route
@@ -111,7 +121,12 @@ export function createAuth() {
 		},
 		// bearer(): mobile clients hold a token rather than a cookie jar, and the
 		// Firebase exchange hands one back directly.
-		plugins: [expo(), bearer()],
+		//
+		// expo() was here for the Better Auth Expo client. That client is gone —
+		// the app authenticates with Firebase and exchanges the ID token — so the
+		// plugin's only remaining effect would be to keep the scheme-based
+		// redirect and cookie handling alive for a caller that no longer exists.
+		plugins: [bearer()],
 	});
 }
 

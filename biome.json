@@ -27,7 +27,9 @@
 			"!**/wrangler.jsonc",
 			"!**/.source",
 			"!**/convex/_generated",
-			"!**/src/migrations/meta"
+			"!**/src/migrations/meta",
+			"!**/google-services.json",
+			"!**/GoogleService-Info.plist"
 		]
 	},
 	"formatter": {

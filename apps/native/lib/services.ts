@@ -2,7 +2,6 @@ import { api } from "./api";
 import type {
 	AuthResponse,
 	Design,
-	DesignSummary,
 	DesignsResponse,
 	DownloadHistoryResponse,
 	DownloadResponse,
@@ -27,7 +26,9 @@ export async function getProfile(): Promise<UserProfile> {
 	return res.data;
 }
 
-export async function updateProfile(payload: UpdateProfilePayload): Promise<{ ok: boolean }> {
+export async function updateProfile(
+	payload: UpdateProfilePayload,
+): Promise<{ ok: boolean }> {
 	const res = await api.put<{ ok: boolean }>("/v1/me/profile", payload);
 	return res.data;
 }
@@ -49,7 +50,10 @@ export async function getTags(category?: string): Promise<Tag[]> {
 	return res.data;
 }
 
-export async function getFeed(cursor?: string | null, limit = 20): Promise<FeedResponse> {
+export async function getFeed(
+	cursor?: string | null,
+	limit = 20,
+): Promise<FeedResponse> {
 	const res = await api.get<FeedResponse>("/v1/feed", {
 		params: {
 			cursor: cursor || undefined,
@@ -91,7 +95,7 @@ function generateUUID(): string {
 export async function downloadContent(
 	id: string,
 	source: "feed" | "search" | "detail" = "detail",
-	customized = false
+	customized = false,
 ): Promise<DownloadResponse> {
 	const idempotencyKey = generateUUID();
 	const res = await api.post<DownloadResponse>(
@@ -101,17 +105,26 @@ export async function downloadContent(
 			headers: {
 				"Idempotency-Key": idempotencyKey,
 			},
-		}
+		},
 	);
 	return res.data;
 }
 
-export async function reportContent(id: string, payload: ReportPayload): Promise<ReportResponse> {
-	const res = await api.post<ReportResponse>(`/v1/content/${id}/report`, payload);
+export async function reportContent(
+	id: string,
+	payload: ReportPayload,
+): Promise<ReportResponse> {
+	const res = await api.post<ReportResponse>(
+		`/v1/content/${id}/report`,
+		payload,
+	);
 	return res.data;
 }
 
-export async function getDownloadHistory(cursor?: string | null, limit = 20): Promise<DownloadHistoryResponse> {
+export async function getDownloadHistory(
+	cursor?: string | null,
+	limit = 20,
+): Promise<DownloadHistoryResponse> {
 	const res = await api.get<DownloadHistoryResponse>("/v1/me/downloads", {
 		params: {
 			cursor: cursor || undefined,
@@ -121,7 +134,10 @@ export async function getDownloadHistory(cursor?: string | null, limit = 20): Pr
 	return res.data;
 }
 
-export async function getDesigns(cursor?: string | null, limit = 20): Promise<DesignsResponse> {
+export async function getDesigns(
+	cursor?: string | null,
+	limit = 20,
+): Promise<DesignsResponse> {
 	const res = await api.get<DesignsResponse>("/v1/me/designs", {
 		params: {
 			cursor: cursor || undefined,
@@ -136,14 +152,17 @@ export async function getDesign(id: string): Promise<Design> {
 	return res.data;
 }
 
-export async function createDesign(payload: { title: string; designJson: Record<string, unknown> }): Promise<Design> {
+export async function createDesign(payload: {
+	title: string;
+	designJson: Record<string, unknown>;
+}): Promise<Design> {
 	const res = await api.post<Design>("/v1/me/designs", payload);
 	return res.data;
 }
 
 export async function patchDesign(
 	id: string,
-	payload: { title?: string; designJson?: Record<string, unknown> }
+	payload: { title?: string; designJson?: Record<string, unknown> },
 ): Promise<Design> {
 	const res = await api.patch<Design>(`/v1/me/designs/${id}`, payload);
 	return res.data;

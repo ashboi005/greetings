@@ -149,7 +149,7 @@ export const authGuard = new Elysia({ name: "auth-guard" })
 		currentUser: await resolveCurrentUserOnce(request),
 	}))
 	.macro({
-		requireRole(allowed: UserRole[] | true) {
+		requireRole(allowed: readonly UserRole[] | true) {
 			return {
 				beforeHandle({ currentUser }: { currentUser: CurrentUser | null }) {
 					if (!currentUser) {
@@ -179,5 +179,15 @@ export function requireUser(currentUser: CurrentUser | null): CurrentUser {
 	return currentUser;
 }
 
-/** Roles permitted to use the web panels at all (spec §1.1). */
-export const WEB_ROLES: UserRole[] = ["designer", "admin", "super_admin"];
+/**
+ * Roles permitted to use the web panels at all (spec §1.1).
+ *
+ * Equivalently: the roles that may hold a Better Auth password credential.
+ * `user` is deliberately absent — app users authenticate through Firebase and
+ * have no password to sign in with, and creating one for them would open a
+ * second door into an account the panels reject anyway.
+ *
+ * A `const` tuple rather than `UserRole[]` so it can also be handed to
+ * `t.UnionEnum` as a request schema, which needs the literal members.
+ */
+export const WEB_ROLES = ["designer", "admin", "super_admin"] as const;

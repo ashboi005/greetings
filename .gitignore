@@ -54,3 +54,6 @@ coverage
 .cache
 tmp
 temp
+
+google-services.json
+GoogleService-Info.plist

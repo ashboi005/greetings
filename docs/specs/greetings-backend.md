@@ -50,6 +50,25 @@ endpoint: verify the Firebase ID token, find-or-create the user, mint a Better A
 custom code the project owns, isolated behind a `TokenVerifier` port so it stays testable. Web
 sign-in uses Better Auth's native Google provider and needs none of it.
 
+**Why not drop Better Auth from the mobile path entirely** and let the app carry its Firebase ID
+token as the bearer? Considered and rejected — the exchange is the smaller cost:
+
+- **Revocation.** A role change or password reset revokes by deleting `session` rows
+  (`modules/admin/roles.ts`, `packages/auth/src/accounts.ts`). A Firebase ID token cannot be
+  withdrawn that way without `firebase-admin` and an `auth_time` check — the dependency §11.1 exists
+  to avoid.
+- **Expiry.** Firebase ID tokens last one hour and that is not configurable, so the app would need a
+  refresh-and-retry loop on every 401.
+- **It removes nothing.** A `user` row must exist regardless — profile, downloads, designs and role
+  invites all key off it — so find-or-create stays either way and merely moves.
+- **One resolver.** `modules/auth/session.ts`, `lib/session-cache.ts` and `lib/csrf.ts` all resolve
+  through `auth.api.getSession`. A second bearer format forks that and doubles the auth surface.
+
+So Better Auth is the panels' identity provider and the app's *session store*. The app holds no
+Better Auth client, no cookie jar and no credential of its own; `@better-auth/expo` was removed for
+that reason, along with the `expo()` server plugin and the `greetings://` / `exp://` trusted origins
+that existed only to serve it.
+
 ---
 
 ## 3. Repository layout
@@ -437,7 +456,30 @@ Queries read `daily_content_stats` for dates before today and `UNION ALL` a live
 
 ### 11.1 Mobile (end users)
 
-1. The RN app completes Firebase Phone (or Firebase Google) sign-in and receives an ID token
+**Firebase is the app's only identity provider**, across three methods: phone OTP, email and
+password, and Google. All three are Firebase's, and all three converge on step 2 below. There is no
+Better Auth client in the app — see §2.1.
+
+Note that the app's email/password sign-in and the panels' (§11.2) are *different account systems*
+that happen to look alike: Firebase owns one, Better Auth the other, and a credential in one is
+meaningless to the other.
+
+The device half uses `@react-native-firebase/auth` plus
+`@react-native-google-signin/google-signin`, so the app cannot run in Expo Go; the setup runbook is
+`docs/firebase-setup.md`.
+
+**Email sign-in requires a confirmed address.** The app creates the account, has Firebase mail the
+link, and issues no session until it is followed. Step 4's linking rule is why: an unverified email
+is never trusted, so an unconfirmed account would be stored with a placeholder address and be
+unfindable by its owner's real one. Firebase sends the mail, which is why this is affordable here
+and not on the panels.
+
+**Phone OTP is complete in code but needs per-platform verification** — Android signing fingerprints
+and an iOS APNs key — before it sends a real SMS. Until that is done it works against Firebase's
+test numbers only. Tracked as `TODO(phone-native-setup)` in `apps/native/lib/firebase.ts`; steps in
+`docs/firebase-setup.md` §2.5–2.6. Email and Google need none of it.
+
+1. The RN app completes Firebase sign-in — phone, email or Google — and receives an ID token
 2. `POST /v1/auth/firebase` `{ idToken }`
 3. Backend verifies the token against Google's public JWKS using `jose`, asserting `iss`,
    `aud === FIREBASE_PROJECT_ID`, and expiry. `jose` rather than `firebase-admin`: signature
@@ -446,10 +488,23 @@ Queries read `daily_content_stats` for dates before today and `UNION ALL` a live
    uid>`), linking by phone/email on match, and consume any matching `role_invites`
 5. Mint and return a Better Auth session
 
+The ID token is used once, here. It is not the bearer, and the app never refreshes it — step 5's
+session token is what later requests carry.
+
 ### 11.2 Web (designers, admins, super admins)
 
-Better Auth's native Google social provider. **Email/password is disabled** — the scaffold enables it
-by default and it must be turned off. Web routes reject `role === 'user'`.
+Better Auth's native Google provider, **plus email and password with public sign-up disabled**.
+
+Email/password is on deliberately, and only for the panels. The scaffold's default was to allow
+self-registration, which is what had to go: `disableSignUp` means `/api/auth/sign-up/email` is
+refused and an account exists only because a super admin created it (`POST /v1/admin/accounts`).
+Google alone would mean publishing an OAuth consent screen and hand-adding every account while it
+sits in testing — not worth it for a few dozen staff.
+
+Web routes reject `role === 'user'`, and that role cannot acquire a password in the first place:
+`POST /v1/admin/accounts` validates against `WEB_ROLES`, so a super admin cannot mint an app user a
+credential account. App users have no `credential` row at all — their only `account` row is the
+Firebase one — which is what keeps the two front doors from meeting.
 
 ### 11.3 Enforcement
 

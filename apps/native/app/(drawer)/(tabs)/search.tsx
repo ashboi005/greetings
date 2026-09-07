@@ -1,22 +1,27 @@
-import React, { useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
+import { Input, Surface } from "heroui-native";
+import { useState } from "react";
 import {
-	View,
-	Text,
-	FlatList,
-	Pressable,
-	Image,
-	Dimensions,
 	ActivityIndicator,
+	Dimensions,
+	FlatList,
+	Image,
+	Pressable,
 	ScrollView,
+	Text,
+	View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
-import { getTags, getLanguages, getRegions, searchContent } from "@/lib/services";
 import { getThumbnailUrl } from "@/lib/api";
+import {
+	getLanguages,
+	getRegions,
+	getTags,
+	searchContent,
+} from "@/lib/services";
 import type { FeedItem } from "@/lib/types";
-import { useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { Surface, Input } from "heroui-native";
 
 const { width } = Dimensions.get("window");
 const COLUMN_WIDTH = (width - 36) / 2;
@@ -26,7 +31,7 @@ export default function SearchScreen() {
 	const [searchQuery, setSearchQuery] = useState("");
 	const [selectedTag, setSelectedTag] = useState<string | null>(null);
 	const [selectedLang, setSelectedLang] = useState<string | null>(null);
-	const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
+	const [selectedRegion, _setSelectedRegion] = useState<string | null>(null);
 
 	const { data: tags } = useQuery({
 		queryKey: ["tags"],
@@ -51,7 +56,13 @@ export default function SearchScreen() {
 		isLoading,
 		refetch,
 	} = useInfiniteQuery({
-		queryKey: ["search", searchQuery, selectedTag, selectedLang, selectedRegion],
+		queryKey: [
+			"search",
+			searchQuery,
+			selectedTag,
+			selectedLang,
+			selectedRegion,
+		],
 		queryFn: ({ pageParam = null }) =>
 			searchContent({
 				q: searchQuery.trim() || undefined,
@@ -87,8 +98,14 @@ export default function SearchScreen() {
 				className="mb-4"
 				style={{ width: COLUMN_WIDTH }}
 			>
-				<Surface variant="secondary" className="rounded-2xl overflow-hidden shadow-sm border border-border/40">
-					<View style={{ width: COLUMN_WIDTH, height: COLUMN_WIDTH * 1.2 }} className="bg-muted">
+				<Surface
+					variant="secondary"
+					className="overflow-hidden rounded-2xl border border-border/40 shadow-sm"
+				>
+					<View
+						style={{ width: COLUMN_WIDTH, height: COLUMN_WIDTH * 1.2 }}
+						className="bg-muted"
+					>
 						{thumbUri ? (
 							<Image
 								source={{ uri: thumbUri }}
@@ -102,10 +119,16 @@ export default function SearchScreen() {
 						)}
 					</View>
 					<View className="p-3">
-						<Text className="font-semibold text-foreground text-sm" numberOfLines={1}>
+						<Text
+							className="font-semibold text-foreground text-sm"
+							numberOfLines={1}
+						>
 							{item.title}
 						</Text>
-						<Text className="text-xs text-muted-foreground mt-1" numberOfLines={1}>
+						<Text
+							className="mt-1 text-muted-foreground text-xs"
+							numberOfLines={1}
+						>
 							{item.designer?.name || "Designer"}
 						</Text>
 					</View>
@@ -116,10 +139,12 @@ export default function SearchScreen() {
 
 	return (
 		<SafeAreaView className="flex-1 bg-background" edges={["top"]}>
-			<View className="px-4 py-3 border-b border-border/30">
-				<Text className="text-xl font-bold text-foreground mb-3">Search & Browse</Text>
+			<View className="border-border/30 border-b px-4 py-3">
+				<Text className="mb-3 font-bold text-foreground text-xl">
+					Search & Browse
+				</Text>
 
-				<View className="flex-row items-center bg-muted/60 rounded-xl px-3 py-1">
+				<View className="flex-row items-center rounded-xl bg-muted/60 px-3 py-1">
 					<Ionicons name="search" size={18} color="#9CA3AF" />
 					<Input
 						value={searchQuery}
@@ -136,19 +161,27 @@ export default function SearchScreen() {
 			</View>
 
 			{/* Filter Chips */}
-			<View className="py-2 border-b border-border/20">
-				<ScrollView horizontal showsHorizontalScrollIndicator={false} className="px-4 flex-row gap-2">
+			<View className="border-border/20 border-b py-2">
+				<ScrollView
+					horizontal
+					showsHorizontalScrollIndicator={false}
+					className="flex-row gap-2 px-4"
+				>
 					{tags?.map((t) => {
 						const isSelected = selectedTag === t.id;
 						return (
 							<Pressable
 								key={t.id}
 								onPress={() => setSelectedTag(isSelected ? null : t.id)}
-								className={`px-3 py-1.5 rounded-full border mr-1 ${
-									isSelected ? "bg-primary border-primary" : "bg-muted/40 border-border/50"
+								className={`mr-1 rounded-full border px-3 py-1.5 ${
+									isSelected
+										? "border-primary bg-primary"
+										: "border-border/50 bg-muted/40"
 								}`}
 							>
-								<Text className={`text-xs ${isSelected ? "text-primary-foreground font-bold" : "text-foreground"}`}>
+								<Text
+									className={`text-xs ${isSelected ? "font-bold text-primary-foreground" : "text-foreground"}`}
+								>
 									#{t.label}
 								</Text>
 							</Pressable>
@@ -157,18 +190,26 @@ export default function SearchScreen() {
 				</ScrollView>
 
 				{languages && languages.length > 0 ? (
-					<ScrollView horizontal showsHorizontalScrollIndicator={false} className="px-4 flex-row gap-2 mt-2">
+					<ScrollView
+						horizontal
+						showsHorizontalScrollIndicator={false}
+						className="mt-2 flex-row gap-2 px-4"
+					>
 						{languages.map((l) => {
 							const isSelected = selectedLang === l.code;
 							return (
 								<Pressable
 									key={l.code}
 									onPress={() => setSelectedLang(isSelected ? null : l.code)}
-									className={`px-3 py-1 rounded-full border mr-1 ${
-										isSelected ? "bg-primary/80 border-primary" : "bg-background border-border/40"
+									className={`mr-1 rounded-full border px-3 py-1 ${
+										isSelected
+											? "border-primary bg-primary/80"
+											: "border-border/40 bg-background"
 									}`}
 								>
-									<Text className={`text-xs ${isSelected ? "text-primary-foreground font-bold" : "text-muted-foreground"}`}>
+									<Text
+										className={`text-xs ${isSelected ? "font-bold text-primary-foreground" : "text-muted-foreground"}`}
+									>
 										{l.nativeName}
 									</Text>
 								</Pressable>
@@ -199,10 +240,14 @@ export default function SearchScreen() {
 					}}
 					onEndReachedThreshold={0.5}
 					ListEmptyComponent={
-						<View className="py-16 items-center">
+						<View className="items-center py-16">
 							<Ionicons name="search-outline" size={48} color="#D1D5DB" />
-							<Text className="text-foreground font-semibold mt-3">No results found</Text>
-							<Text className="text-xs text-muted-foreground mt-1">Try adjusting your search terms or filters</Text>
+							<Text className="mt-3 font-semibold text-foreground">
+								No results found
+							</Text>
+							<Text className="mt-1 text-muted-foreground text-xs">
+								Try adjusting your search terms or filters
+							</Text>
 						</View>
 					}
 				/>

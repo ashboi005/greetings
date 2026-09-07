@@ -1,31 +1,40 @@
-import React, { useState, useEffect } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { useQuery } from "@tanstack/react-query";
 import {
-	View,
-	Text,
-	ScrollView,
-	Image,
-	Pressable,
-	ActivityIndicator,
-	Alert,
-} from "react-native";
+	Button,
+	Input,
+	Label,
+	Spinner,
+	Surface,
+	TextField,
+	useToast,
+} from "heroui-native";
+import { useEffect, useState } from "react";
+import { Image, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/auth-context";
-import { useQuery } from "@tanstack/react-query";
+import { apiErrorMessage } from "@/lib/api";
 import { getLanguages, getRegions, updateProfile } from "@/lib/services";
-import { Button, Surface, TextField, Label, Input, useToast, Spinner } from "heroui-native";
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 
 export default function ProfileScreen() {
 	const { userProfile, signOut, refreshProfile } = useAuth();
-	const router = useRouter();
 	const { toast } = useToast();
 
-	const [displayName, setDisplayName] = useState(userProfile?.displayName || "");
-	const [designation, setDesignation] = useState(userProfile?.designation || "");
-	const [contactPhone, setContactPhone] = useState(userProfile?.contactPhone || "");
-	const [selectedRegion, setSelectedRegion] = useState(userProfile?.regionCode || "");
-	const [selectedLanguages, setSelectedLanguages] = useState<string[]>(userProfile?.languages || []);
+	const [displayName, setDisplayName] = useState(
+		userProfile?.displayName || "",
+	);
+	const [designation, setDesignation] = useState(
+		userProfile?.designation || "",
+	);
+	const [contactPhone, setContactPhone] = useState(
+		userProfile?.contactPhone || "",
+	);
+	const [selectedRegion, setSelectedRegion] = useState(
+		userProfile?.regionCode || "",
+	);
+	const [selectedLanguages, setSelectedLanguages] = useState<string[]>(
+		userProfile?.languages || [],
+	);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 
 	useEffect(() => {
@@ -87,10 +96,10 @@ export default function ProfileScreen() {
 				variant: "success",
 				label: "Profile updated successfully!",
 			});
-		} catch (err: any) {
+		} catch (cause) {
 			toast.show({
 				variant: "danger",
-				label: err?.response?.data?.error?.message || "Failed to update profile",
+				label: apiErrorMessage(cause, "Failed to update profile"),
 			});
 		} finally {
 			setIsSubmitting(false);
@@ -99,44 +108,55 @@ export default function ProfileScreen() {
 
 	return (
 		<SafeAreaView className="flex-1 bg-background" edges={["top"]}>
-			<View className="px-4 py-3 border-b border-border/30 flex-row items-center justify-between">
-				<Text className="text-xl font-bold text-foreground">Profile & Settings</Text>
-				<Pressable
-					onPress={async () => {
-						await signOut();
-						router.replace("/(auth)/sign-in");
-					}}
-				>
+			<View className="flex-row items-center justify-between border-border/30 border-b px-4 py-3">
+				<Text className="font-bold text-foreground text-xl">
+					Profile & Settings
+				</Text>
+				{/* No navigation here: clearing the session moves the guard in
+				    auth-context to the sign-in screen on its own. */}
+				<Pressable onPress={() => void signOut()}>
 					<Ionicons name="log-out-outline" size={22} color="#EF4444" />
 				</Pressable>
 			</View>
 
 			<ScrollView className="flex-1 px-4 py-5">
 				{/* Avatar & Header */}
-				<Surface variant="secondary" className="rounded-2xl p-5 mb-6 items-center">
-					<View className="w-20 h-20 rounded-full bg-primary/10 items-center justify-center mb-3">
+				<Surface
+					variant="secondary"
+					className="mb-6 items-center rounded-2xl p-5"
+				>
+					<View className="mb-3 h-20 w-20 items-center justify-center rounded-full bg-primary/10">
 						{userProfile?.avatarUrl ? (
-							<Image source={{ uri: userProfile.avatarUrl }} className="w-20 h-20 rounded-full" />
+							<Image
+								source={{ uri: userProfile.avatarUrl }}
+								className="h-20 w-20 rounded-full"
+							/>
 						) : (
 							<Ionicons name="person-outline" size={36} color="#6366F1" />
 						)}
 					</View>
-					<Text className="text-lg font-bold text-foreground">
+					<Text className="font-bold text-foreground text-lg">
 						{userProfile?.displayName || "User"}
 					</Text>
-					<Text className="text-xs text-muted-foreground mt-0.5">
+					<Text className="mt-0.5 text-muted-foreground text-xs">
 						{userProfile?.phone || "Phone User"}
 					</Text>
 				</Surface>
 
 				{/* Profile Editing Form */}
-				<Surface variant="secondary" className="rounded-2xl p-5 mb-6">
-					<Text className="text-base font-semibold text-foreground mb-4">Edit Profile Info</Text>
+				<Surface variant="secondary" className="mb-6 rounded-2xl p-5">
+					<Text className="mb-4 font-semibold text-base text-foreground">
+						Edit Profile Info
+					</Text>
 
 					<View className="gap-4">
 						<TextField>
 							<Label>Display Name</Label>
-							<Input value={displayName} onChangeText={setDisplayName} placeholder="Your Name" />
+							<Input
+								value={displayName}
+								onChangeText={setDisplayName}
+								placeholder="Your Name"
+							/>
 						</TextField>
 
 						<TextField>
@@ -161,22 +181,32 @@ export default function ProfileScreen() {
 				</Surface>
 
 				{/* Region Selection */}
-				<Surface variant="secondary" className="rounded-2xl p-5 mb-6">
-					<Text className="text-base font-semibold text-foreground mb-3">Region / State</Text>
-					<ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row gap-2 py-1">
+				<Surface variant="secondary" className="mb-6 rounded-2xl p-5">
+					<Text className="mb-3 font-semibold text-base text-foreground">
+						Region / State
+					</Text>
+					<ScrollView
+						horizontal
+						showsHorizontalScrollIndicator={false}
+						className="flex-row gap-2 py-1"
+					>
 						{regions?.map((reg) => {
 							const isSelected = selectedRegion === reg.code;
 							return (
 								<Pressable
 									key={reg.code}
 									onPress={() => setSelectedRegion(reg.code)}
-									className={`px-4 py-2.5 rounded-xl border mr-2 ${
-										isSelected ? "bg-primary border-primary" : "bg-background border-border"
+									className={`mr-2 rounded-xl border px-4 py-2.5 ${
+										isSelected
+											? "border-primary bg-primary"
+											: "border-border bg-background"
 									}`}
 								>
 									<Text
 										className={`font-medium ${
-											isSelected ? "text-primary-foreground font-bold" : "text-foreground"
+											isSelected
+												? "font-bold text-primary-foreground"
+												: "text-foreground"
 										}`}
 									>
 										{reg.name}
@@ -188,8 +218,10 @@ export default function ProfileScreen() {
 				</Surface>
 
 				{/* Languages */}
-				<Surface variant="secondary" className="rounded-2xl p-5 mb-8">
-					<Text className="text-base font-semibold text-foreground mb-3">Languages</Text>
+				<Surface variant="secondary" className="mb-8 rounded-2xl p-5">
+					<Text className="mb-3 font-semibold text-base text-foreground">
+						Languages
+					</Text>
 					<View className="flex-row flex-wrap gap-2">
 						{languages?.map((lang) => {
 							const isSelected = selectedLanguages.includes(lang.code);
@@ -197,11 +229,15 @@ export default function ProfileScreen() {
 								<Pressable
 									key={lang.code}
 									onPress={() => toggleLanguage(lang.code)}
-									className={`px-3 py-2 rounded-full border ${
-										isSelected ? "bg-primary border-primary" : "bg-background border-border"
+									className={`rounded-full border px-3 py-2 ${
+										isSelected
+											? "border-primary bg-primary"
+											: "border-border bg-background"
 									}`}
 								>
-									<Text className={`text-xs ${isSelected ? "text-primary-foreground font-bold" : "text-foreground"}`}>
+									<Text
+										className={`text-xs ${isSelected ? "font-bold text-primary-foreground" : "text-foreground"}`}
+									>
 										{lang.nativeName} ({lang.name})
 									</Text>
 								</Pressable>
@@ -210,8 +246,16 @@ export default function ProfileScreen() {
 					</View>
 				</Surface>
 
-				<Button onPress={handleSaveProfile} isDisabled={isSubmitting} className="mb-12">
-					{isSubmitting ? <Spinner size="sm" color="default" /> : <Button.Label>Save Changes</Button.Label>}
+				<Button
+					onPress={handleSaveProfile}
+					isDisabled={isSubmitting}
+					className="mb-12"
+				>
+					{isSubmitting ? (
+						<Spinner size="sm" color="default" />
+					) : (
+						<Button.Label>Save Changes</Button.Label>
+					)}
 				</Button>
 			</ScrollView>
 		</SafeAreaView>

@@ -1,8 +1,8 @@
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { Drawer } from "expo-router/drawer";
 import { useThemeColor } from "heroui-native";
-import React, { useCallback } from "react";
+import { useCallback } from "react";
 import { Pressable, Text } from "react-native";
 
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -27,35 +27,31 @@ function DrawerLayout() {
 			}}
 		>
 			<Drawer.Screen
-				name="index"
+				name="(tabs)"
 				options={{
-					headerTitle: "Home",
-					drawerLabel: ({ color, focused }: { color: string; focused: boolean }) => (
+					headerTitle: "Greetings",
+					drawerLabel: ({
+						color,
+						focused,
+					}: {
+						color: string;
+						focused: boolean;
+					}) => (
 						<Text style={{ color: focused ? color : themeColorForeground }}>
 							Home
 						</Text>
 					),
-					drawerIcon: ({ size, color, focused }: { size: number; color: string; focused: boolean }) => (
+					drawerIcon: ({
+						size,
+						color,
+						focused,
+					}: {
+						size: number;
+						color: string;
+						focused: boolean;
+					}) => (
 						<Ionicons
 							name="home-outline"
-							size={size}
-							color={focused ? color : themeColorForeground}
-						/>
-					),
-				}}
-			/>
-			<Drawer.Screen
-				name="(tabs)"
-				options={{
-					headerTitle: "Tabs",
-					drawerLabel: ({ color, focused }: { color: string; focused: boolean }) => (
-						<Text style={{ color: focused ? color : themeColorForeground }}>
-							Tabs
-						</Text>
-					),
-					drawerIcon: ({ size, color, focused }: { size: number; color: string; focused: boolean }) => (
-						<MaterialIcons
-							name="border-bottom"
 							size={size}
 							color={focused ? color : themeColorForeground}
 						/>

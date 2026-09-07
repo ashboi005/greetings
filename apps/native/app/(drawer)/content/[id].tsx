@@ -1,20 +1,28 @@
-import React, { useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
-	View,
-	Text,
-	ScrollView,
+	Button,
+	Input,
+	Label,
+	Spinner,
+	Surface,
+	TextField,
+	useToast,
+} from "heroui-native";
+import { useState } from "react";
+import {
 	Image,
-	Pressable,
+	Linking,
 	Modal,
 	Platform,
-	Linking,
+	Pressable,
+	ScrollView,
+	Text,
+	View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { Button, Surface, TextField, Label, Input, useToast, Spinner } from "heroui-native";
+import { apiErrorCode, apiErrorMessage, transformImageUrl } from "@/lib/api";
 import { downloadContent, reportContent } from "@/lib/services";
-import { transformImageUrl } from "@/lib/api";
 
 export default function ContentDetailScreen() {
 	const params = useLocalSearchParams<{
@@ -30,11 +38,15 @@ export default function ContentDetailScreen() {
 	const [isDownloading, setIsDownloading] = useState(false);
 	const [isSharing, setIsSharing] = useState(false);
 	const [reportModalVisible, setReportModalVisible] = useState(false);
-	const [reportReason, setReportReason] = useState<"inappropriate" | "copyright" | "spam" | "wrong_info" | "other">("inappropriate");
+	const [reportReason, setReportReason] = useState<
+		"inappropriate" | "copyright" | "spam" | "wrong_info" | "other"
+	>("inappropriate");
 	const [reportNote, setReportNote] = useState("");
 	const [isReporting, setIsReporting] = useState(false);
 
-	const fullImageUrl = transformImageUrl(params.imageUrl, "width=1000,format=auto,quality=90") || params.imageUrl;
+	const fullImageUrl =
+		transformImageUrl(params.imageUrl, "width=1000,format=auto,quality=90") ||
+		params.imageUrl;
 
 	const handleDownload = async () => {
 		if (!params.id) return;
@@ -65,15 +77,18 @@ export default function ContentDetailScreen() {
 
 						const filename = `greetings_${params.id}_${Date.now()}.webp`;
 						const fileUri = `${FileSystem.documentDirectory || ""}${filename}`;
-						const downloadRes = await FileSystem.downloadAsync(res.url, fileUri);
+						const downloadRes = await FileSystem.downloadAsync(
+							res.url,
+							fileUri,
+						);
 						await MediaLibrary.saveToLibraryAsync(downloadRes.uri);
 
 						toast.show({
 							variant: "success",
 							label: "Saved image to Gallery successfully!",
 						});
-					} catch (nativeErr: any) {
-						// Fallback if native module is not linked in Expo Go preview
+					} catch {
+						// The media library module may be missing in a preview build.
 						await Linking.openURL(res.url);
 						toast.show({
 							variant: "success",
@@ -82,8 +97,8 @@ export default function ContentDetailScreen() {
 					}
 				}
 			}
-		} catch (err: any) {
-			if (err?.response?.status === 409) {
+		} catch (cause) {
+			if (apiErrorCode(cause) === "CONFLICT") {
 				toast.show({
 					variant: "danger",
 					label: "This content is no longer available for download.",
@@ -91,7 +106,7 @@ export default function ContentDetailScreen() {
 			} else {
 				toast.show({
 					variant: "danger",
-					label: err?.response?.data?.error?.message || "Failed to download image",
+					label: apiErrorMessage(cause, "Failed to download image"),
 				});
 			}
 		} finally {
@@ -132,21 +147,24 @@ export default function ContentDetailScreen() {
 
 						const filename = `greetings_share_${params.id}.webp`;
 						const fileUri = `${FileSystem.cacheDirectory || ""}${filename}`;
-						const downloadRes = await FileSystem.downloadAsync(res.url, fileUri);
+						const downloadRes = await FileSystem.downloadAsync(
+							res.url,
+							fileUri,
+						);
 
 						await Sharing.shareAsync(downloadRes.uri, {
 							mimeType: "image/webp",
 							dialogTitle: params.title || "Share Greeting",
 						});
-					} catch (nativeErr: any) {
+					} catch {
 						await Linking.openURL(res.url);
 					}
 				}
 			}
-		} catch (err: any) {
+		} catch (cause) {
 			toast.show({
 				variant: "danger",
-				label: err?.response?.data?.error?.message || "Failed to share image",
+				label: apiErrorMessage(cause, "Failed to share image"),
 			});
 		} finally {
 			setIsSharing(false);
@@ -173,8 +191,10 @@ export default function ContentDetailScreen() {
 					label: "Report submitted successfully.",
 				});
 			}
-		} catch (err: any) {
-			if (err?.response?.status === 409) {
+		} catch (cause) {
+			// A duplicate report is not a failure the reporter needs to see —
+			// their first one is already open. §7 of the mobile guide.
+			if (apiErrorCode(cause) === "CONFLICT") {
 				setReportModalVisible(false);
 				toast.show({
 					variant: "success",
@@ -183,7 +203,7 @@ export default function ContentDetailScreen() {
 			} else {
 				toast.show({
 					variant: "danger",
-					label: err?.response?.data?.error?.message || "Failed to submit report",
+					label: apiErrorMessage(cause, "Failed to submit report"),
 				});
 			}
 		} finally {
@@ -194,11 +214,14 @@ export default function ContentDetailScreen() {
 	return (
 		<SafeAreaView className="flex-1 bg-background">
 			{/* Top Header */}
-			<View className="px-4 py-3 flex-row items-center justify-between border-b border-border/30">
+			<View className="flex-row items-center justify-between border-border/30 border-b px-4 py-3">
 				<Pressable onPress={() => router.back()} className="p-1">
 					<Ionicons name="arrow-back" size={24} color="#374151" />
 				</Pressable>
-				<Text className="text-lg font-bold text-foreground flex-1 ml-3" numberOfLines={1}>
+				<Text
+					className="ml-3 flex-1 font-bold text-foreground text-lg"
+					numberOfLines={1}
+				>
 					{params.title || "Greeting Detail"}
 				</Text>
 				<Pressable onPress={() => setReportModalVisible(true)} className="p-2">
@@ -207,7 +230,7 @@ export default function ContentDetailScreen() {
 			</View>
 
 			<ScrollView className="flex-1 px-4 py-4">
-				<View className="w-full bg-muted rounded-2xl overflow-hidden shadow-sm mb-6 items-center justify-center min-h-[300px]">
+				<View className="mb-6 min-h-[300px] w-full items-center justify-center overflow-hidden rounded-2xl bg-muted shadow-sm">
 					{fullImageUrl ? (
 						<Image
 							source={{ uri: fullImageUrl }}
@@ -215,29 +238,33 @@ export default function ContentDetailScreen() {
 							resizeMode="contain"
 						/>
 					) : (
-						<View className="p-8 items-center">
+						<View className="items-center p-8">
 							<Ionicons name="image-outline" size={64} color="#9CA3AF" />
-							<Text className="text-muted-foreground mt-2">Preview unavailable</Text>
+							<Text className="mt-2 text-muted-foreground">
+								Preview unavailable
+							</Text>
 						</View>
 					)}
 				</View>
 
-				<Surface variant="secondary" className="rounded-2xl p-5 mb-6">
-					<Text className="text-xl font-bold text-foreground mb-1">{params.title}</Text>
-					<Text className="text-sm text-muted-foreground mb-3">
+				<Surface variant="secondary" className="mb-6 rounded-2xl p-5">
+					<Text className="mb-1 font-bold text-foreground text-xl">
+						{params.title}
+					</Text>
+					<Text className="mb-3 text-muted-foreground text-sm">
 						Designed by {params.designerName || "Community Designer"}
 					</Text>
 
-					<View className="flex-row items-center gap-2 py-2 border-t border-border/20">
+					<View className="flex-row items-center gap-2 border-border/20 border-t py-2">
 						<Ionicons name="download-outline" size={16} color="#6B7280" />
-						<Text className="text-xs text-muted-foreground">
+						<Text className="text-muted-foreground text-xs">
 							{params.downloadCount || "0"} downloads recorded
 						</Text>
 					</View>
 				</Surface>
 
 				{/* Action Buttons */}
-				<View className="gap-3 mb-10">
+				<View className="mb-10 gap-3">
 					<Button onPress={handleDownload} isDisabled={isDownloading}>
 						{isDownloading ? (
 							<Spinner size="sm" color="default" />
@@ -249,12 +276,20 @@ export default function ContentDetailScreen() {
 						)}
 					</Button>
 
-					<Button onPress={handleShare} isDisabled={isSharing} variant="secondary">
+					<Button
+						onPress={handleShare}
+						isDisabled={isSharing}
+						variant="secondary"
+					>
 						{isSharing ? (
 							<Spinner size="sm" color="default" />
 						) : (
 							<View className="flex-row items-center gap-2">
-								<Ionicons name="share-social-outline" size={20} color="#374151" />
+								<Ionicons
+									name="share-social-outline"
+									size={20}
+									color="#374151"
+								/>
 								<Button.Label>Share Greeting</Button.Label>
 							</View>
 						)}
@@ -264,22 +299,36 @@ export default function ContentDetailScreen() {
 
 			{/* Report Modal */}
 			<Modal visible={reportModalVisible} transparent animationType="fade">
-				<View className="flex-1 bg-black/60 items-center justify-center p-5">
+				<View className="flex-1 items-center justify-center bg-black/60 p-5">
 					<Surface variant="secondary" className="w-full rounded-2xl p-6">
-						<Text className="text-lg font-bold text-foreground mb-3">Report Content</Text>
-						<Text className="text-xs text-muted-foreground mb-4">
+						<Text className="mb-3 font-bold text-foreground text-lg">
+							Report Content
+						</Text>
+						<Text className="mb-4 text-muted-foreground text-xs">
 							Help us keep the platform safe. Select a reason for reporting:
 						</Text>
 
-						{(["inappropriate", "copyright", "spam", "wrong_info", "other"] as const).map((r) => (
+						{(
+							[
+								"inappropriate",
+								"copyright",
+								"spam",
+								"wrong_info",
+								"other",
+							] as const
+						).map((r) => (
 							<Pressable
 								key={r}
 								onPress={() => setReportReason(r)}
-								className={`p-3 rounded-xl mb-2 border ${
-									reportReason === r ? "bg-primary/10 border-primary" : "bg-background border-border"
+								className={`mb-2 rounded-xl border p-3 ${
+									reportReason === r
+										? "border-primary bg-primary/10"
+										: "border-border bg-background"
 								}`}
 							>
-								<Text className={`capitalize font-medium ${reportReason === r ? "text-primary" : "text-foreground"}`}>
+								<Text
+									className={`font-medium capitalize ${reportReason === r ? "text-primary" : "text-foreground"}`}
+								>
 									{r.replace("_", " ")}
 								</Text>
 							</Pressable>
@@ -303,8 +352,16 @@ export default function ContentDetailScreen() {
 							>
 								<Button.Label>Cancel</Button.Label>
 							</Button>
-							<Button onPress={submitReport} isDisabled={isReporting} className="flex-1">
-								{isReporting ? <Spinner size="sm" color="default" /> : <Button.Label>Submit</Button.Label>}
+							<Button
+								onPress={submitReport}
+								isDisabled={isReporting}
+								className="flex-1"
+							>
+								{isReporting ? (
+									<Spinner size="sm" color="default" />
+								) : (
+									<Button.Label>Submit</Button.Label>
+								)}
 							</Button>
 						</View>
 					</Surface>

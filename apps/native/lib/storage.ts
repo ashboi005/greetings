@@ -9,7 +9,9 @@ export const tokenStorage = {
 	async getItem(key: string): Promise<string | null> {
 		if (Platform.OS === "web") {
 			try {
-				return typeof window !== "undefined" ? localStorage.getItem(key) : memoryStore.get(key) || null;
+				return typeof window !== "undefined"
+					? localStorage.getItem(key)
+					: memoryStore.get(key) || null;
 			} catch {
 				return memoryStore.get(key) || null;
 			}
