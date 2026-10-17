@@ -21,6 +21,7 @@ import { authErrorMessage } from "@/lib/auth-errors";
  *
  * Compiled out of release builds — `__DEV__` is statically false there, so the
  * component and its imports are dropped rather than merely hidden behind a flag.
+ * Developer-facing, so deliberately left in English.
  */
 export function DevTokenSignIn() {
 	const { signInWithFirebaseToken, isSigningIn } = useAuth();
@@ -36,19 +37,19 @@ export function DevTokenSignIn() {
 		}
 		setError(null);
 		try {
-			await signInWithFirebaseToken(idToken.trim());
+			await signInWithFirebaseToken(idToken.trim(), "phone");
 		} catch (cause) {
 			setError(authErrorMessage(cause));
 		}
 	};
 
 	return (
-		<Surface variant="secondary" className="mt-6 rounded-2xl p-6 opacity-80">
-			<Text className="mb-3 font-semibold text-muted-foreground text-sm">
+		<Surface variant="secondary" className="mt-6 rounded-2xl p-5 opacity-80">
+			<Text className="mb-3 font-semibold text-muted text-sm">
 				Development only — paste a Firebase ID token
 			</Text>
 
-			<FieldError isInvalid={!!error} className="mb-3">
+			<FieldError isInvalid={Boolean(error)} className="mb-3">
 				{error}
 			</FieldError>
 

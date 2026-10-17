@@ -3,3 +3,86 @@
 @import "heroui-native/styles";
 
 @source "./node_modules/heroui-native/lib";
+
+/*
+ * Greetings palette: marigold and saffron on warm paper, for an audience that
+ * shares festival greetings. Only heroui-native's own tokens are overridden, so
+ * every component and every utility (`bg-accent`, `text-muted`, `bg-surface`)
+ * follows the brand without a parallel set of colour names.
+ *
+ * Note there is no `primary` token in heroui-native — the brand colour is
+ * `accent`. `bg-primary` and `text-muted-foreground` silently render nothing.
+ */
+
+@theme {
+	--radius: 0.75rem;
+
+	/* Display face for headings. Loaded at runtime in app/_layout.tsx under
+	   exactly these names; Poppins carries Devanagari, so Hindi headings match. */
+	--font-heading: "Poppins_700Bold";
+	--font-heading-semibold: "Poppins_600SemiBold";
+}
+
+@layer theme {
+	:root {
+		@variant light {
+			--background: oklch(0.982 0.014 75);
+			--foreground: oklch(0.24 0.025 45);
+
+			--surface: oklch(1 0 0);
+			--surface-foreground: var(--foreground);
+			--surface-secondary: oklch(0.958 0.024 72);
+			--surface-secondary-foreground: var(--foreground);
+			--surface-tertiary: oklch(0.935 0.03 70);
+			--surface-tertiary-foreground: var(--foreground);
+
+			--overlay: oklch(1 0 0);
+			--overlay-foreground: var(--foreground);
+
+			--muted: oklch(0.5 0.03 50);
+
+			--default: oklch(0.94 0.022 70);
+			--default-foreground: var(--foreground);
+
+			/* Deep saffron: 4.8:1 against white, so labels on it pass AA. */
+			--accent: oklch(0.58 0.175 42);
+			--accent-foreground: oklch(0.995 0.005 75);
+
+			--field-background: oklch(1 0 0);
+			--field-border: oklch(0.9 0.02 70);
+
+			--border: oklch(0.91 0.02 70);
+			--separator: oklch(0.82 0.025 65);
+		}
+
+		@variant dark {
+			--background: oklch(0.18 0.012 50);
+			--foreground: oklch(0.96 0.012 75);
+
+			--surface: oklch(0.225 0.014 50);
+			--surface-foreground: var(--foreground);
+			--surface-secondary: oklch(0.265 0.016 50);
+			--surface-secondary-foreground: var(--foreground);
+			--surface-tertiary: oklch(0.3 0.016 50);
+			--surface-tertiary-foreground: var(--foreground);
+
+			--overlay: oklch(0.24 0.014 50);
+			--overlay-foreground: var(--foreground);
+
+			--muted: oklch(0.73 0.03 65);
+
+			--default: oklch(0.29 0.015 50);
+			--default-foreground: var(--foreground);
+
+			/* Brighter marigold on dark, with dark ink on top for contrast. */
+			--accent: oklch(0.74 0.16 58);
+			--accent-foreground: oklch(0.2 0.02 45);
+
+			--field-background: oklch(0.24 0.014 50);
+			--field-border: oklch(0.33 0.016 50);
+
+			--border: oklch(0.31 0.014 50);
+			--separator: oklch(0.4 0.016 50);
+		}
+	}
+}

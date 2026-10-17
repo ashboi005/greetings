@@ -134,3 +134,12 @@ export interface ApiErrorResponse {
 		details: Record<string, unknown> | null;
 	};
 }
+
+export type DesignAssetPurpose = "source" | "preview";
+
+/** A presigned upload: PUT the bytes to `uploadUrl`, then confirm `storageKey`. */
+export interface UploadTicket {
+	storageKey: string;
+	uploadUrl: string;
+	expiresInSeconds: number;
+}

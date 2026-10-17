@@ -1,15 +1,32 @@
 import type React from "react";
-import { createContext, useCallback, useContext, useMemo } from "react";
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useMemo,
+	useState,
+} from "react";
 import { Uniwind, useUniwind } from "uniwind";
 
-type ThemeName = "light" | "dark";
+import { getPref, setPref } from "@/lib/prefs";
+
+/** "system" follows the phone's light/dark setting, and is the default. */
+export type ThemePreference = "system" | "light" | "dark";
+
+function storedPreference(): ThemePreference {
+	const stored = getPref("theme");
+	return stored === "light" || stored === "dark" ? stored : "system";
+}
+
+// Applied before the first render so a dark-mode user never sees a light frame.
+Uniwind.setTheme(storedPreference());
 
 type AppThemeContextType = {
 	currentTheme: string;
+	preference: ThemePreference;
 	isLight: boolean;
 	isDark: boolean;
-	setTheme: (theme: ThemeName) => void;
-	toggleTheme: () => void;
+	setPreference: (preference: ThemePreference) => void;
 };
 
 const AppThemeContext = createContext<AppThemeContextType | undefined>(
@@ -22,32 +39,23 @@ export const AppThemeProvider = ({
 	children: React.ReactNode;
 }) => {
 	const { theme } = useUniwind();
+	const [preference, setPreferenceState] = useState(storedPreference);
 
-	const isLight = useMemo(() => {
-		return theme === "light";
-	}, [theme]);
-
-	const isDark = useMemo(() => {
-		return theme === "dark";
-	}, [theme]);
-
-	const setTheme = useCallback((newTheme: ThemeName) => {
-		Uniwind.setTheme(newTheme);
+	const setPreference = useCallback((next: ThemePreference) => {
+		setPref("theme", next === "system" ? null : next);
+		setPreferenceState(next);
+		Uniwind.setTheme(next);
 	}, []);
-
-	const toggleTheme = useCallback(() => {
-		Uniwind.setTheme(theme === "light" ? "dark" : "light");
-	}, [theme]);
 
 	const value = useMemo(
 		() => ({
 			currentTheme: theme,
-			isLight,
-			isDark,
-			setTheme,
-			toggleTheme,
+			preference,
+			isLight: theme === "light",
+			isDark: theme === "dark",
+			setPreference,
 		}),
-		[theme, isLight, isDark, setTheme, toggleTheme],
+		[theme, preference, setPreference],
 	);
 
 	return (

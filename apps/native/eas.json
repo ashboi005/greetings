@@ -1,0 +1,44 @@
+{
+	"cli": {
+		"version": ">= 16.0.0",
+		"appVersionSource": "remote"
+	},
+	"build": {
+		"base": {
+			"node": "22.20.0",
+			"bun": "1.3.10",
+			"env": {
+				"EXPO_PUBLIC_SERVER_URL": "https://greetings-api.ashwathsoni.dev"
+			}
+		},
+		"development": {
+			"extends": "base",
+			"developmentClient": true,
+			"distribution": "internal",
+			"environment": "development",
+			"android": { "buildType": "apk" },
+			"ios": { "simulator": false }
+		},
+		"development-simulator": {
+			"extends": "development",
+			"ios": { "simulator": true }
+		},
+		"preview": {
+			"extends": "base",
+			"distribution": "internal",
+			"environment": "preview",
+			"android": { "buildType": "apk" }
+		},
+		"production": {
+			"extends": "base",
+			"environment": "production",
+			"autoIncrement": true,
+			"android": { "buildType": "app-bundle" }
+		}
+	},
+	"submit": {
+		"production": {
+			"android": { "track": "internal" }
+		}
+	}
+}

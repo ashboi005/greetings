@@ -1,0 +1,91 @@
+import { defineStrings } from "../define";
+
+export default defineStrings({
+	en: {
+		title: "Profile",
+		noName: "Add your name below",
+
+		logo: "Your logo or photo",
+		logoHint: "Your logo or photo can be added to greetings you customise.",
+		logoAdd: "Add logo",
+		logoChange: "Change logo",
+		logoRemove: "Remove",
+		logoRemoveTitle: "Remove your logo?",
+		logoRemoveBody: "It will no longer be available for your greetings.",
+		logoSaved: "Logo saved",
+		logoTooBig: "This photo is too large. Please pick one under 5 MB.",
+		logoWrongType: "Please pick a JPG or PNG photo.",
+
+		detailsTitle: "Your details",
+		detailsBody: "Printed on greetings when you use “Add my name & share”.",
+		languagesTitle: "Greeting languages",
+		languagesBody: "We show greetings in these languages first.",
+		stateTitle: "Your state",
+		stateBody: "Greetings for your state's festivals come first.",
+		stateNone: "Not chosen",
+		change: "Change",
+		needLanguage: "Please pick at least one greeting language.",
+		needState: "Please pick your state.",
+		saveChanges: "Save changes",
+		savedToast: "Your changes are saved",
+
+		appLanguageTitle: "App language",
+		themeTitle: "Appearance",
+		themeSystem: "Same as phone",
+		themeLight: "Light",
+		themeDark: "Dark",
+
+		aboutTitle: "About",
+		privacyChoices: "Privacy choices",
+		privacyPolicy: "Privacy policy",
+		version: "App version {version}",
+
+		signOut: "Sign out",
+		signOutTitle: "Sign out?",
+		signOutBody:
+			"You can sign in again any time with the same number or email.",
+	},
+	hi: {
+		title: "प्रोफ़ाइल",
+		noName: "नीचे अपना नाम जोड़ें",
+
+		logo: "आपका लोगो या फ़ोटो",
+		logoHint: "आपका लोगो या फ़ोटो आपकी बनाई ग्रीटिंग पर लगाया जा सकता है।",
+		logoAdd: "लोगो जोड़ें",
+		logoChange: "लोगो बदलें",
+		logoRemove: "हटाएँ",
+		logoRemoveTitle: "लोगो हटाना है?",
+		logoRemoveBody: "फिर यह आपकी ग्रीटिंग में नहीं लगेगा।",
+		logoSaved: "लोगो सेव हो गया",
+		logoTooBig: "यह फ़ोटो बहुत बड़ी है। 5 MB से छोटी फ़ोटो चुनें।",
+		logoWrongType: "कृपया JPG या PNG फ़ोटो चुनें।",
+
+		detailsTitle: "आपकी जानकारी",
+		detailsBody: "“मेरा नाम जोड़कर भेजें” चुनने पर यह ग्रीटिंग पर छपती है।",
+		languagesTitle: "ग्रीटिंग की भाषाएँ",
+		languagesBody: "हम इन भाषाओं की ग्रीटिंग पहले दिखाते हैं।",
+		stateTitle: "आपका राज्य",
+		stateBody: "आपके राज्य के त्योहारों की ग्रीटिंग पहले आती हैं।",
+		stateNone: "नहीं चुना",
+		change: "बदलें",
+		needLanguage: "कृपया कम से कम एक भाषा चुनें।",
+		needState: "कृपया अपना राज्य चुनें।",
+		saveChanges: "बदलाव सेव करें",
+		savedToast: "आपके बदलाव सेव हो गए",
+
+		appLanguageTitle: "ऐप की भाषा",
+		themeTitle: "रंग-रूप",
+		themeSystem: "फ़ोन जैसा",
+		themeLight: "हल्का",
+		themeDark: "गहरा",
+
+		aboutTitle: "जानकारी",
+		privacyChoices: "निजता की पसंद",
+		privacyPolicy: "निजता नीति",
+		version: "ऐप वर्ज़न {version}",
+
+		signOut: "साइन आउट करें",
+		signOutTitle: "साइन आउट करना है?",
+		signOutBody: "आप उसी नंबर या ईमेल से कभी भी फिर साइन इन कर सकते हैं।",
+	},
+});

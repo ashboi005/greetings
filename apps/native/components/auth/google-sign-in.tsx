@@ -1,11 +1,13 @@
-import { Ionicons } from "@expo/vector-icons";
-import { Button, FieldError, Spinner, useThemeColor } from "heroui-native";
+import { FieldError } from "heroui-native";
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
+import { ActionButton } from "@/components/ui/action-button";
 import { useAuth } from "@/contexts/auth-context";
-import { authErrorMessage } from "@/lib/auth-errors";
+import { track } from "@/lib/analytics";
 import { isGoogleSignInAvailable, signInWithGoogle } from "@/lib/firebase";
+import { useT } from "@/lib/i18n";
+import { useAuthError } from "./use-auth-error";
 
 /**
  * "Continue with Google".
@@ -15,16 +17,16 @@ import { isGoogleSignInAvailable, signInWithGoogle } from "@/lib/firebase";
  */
 export function GoogleSignIn() {
 	const { signInWithFirebaseToken, isSigningIn } = useAuth();
-	const foreground = useThemeColor("foreground");
+	const t = useT();
+	const authError = useAuthError();
 
 	const [isWorking, setIsWorking] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
 	if (!isGoogleSignInAvailable()) return null;
 
-	const busy = isWorking || isSigningIn;
-
 	const handlePress = async () => {
+		track("sign_in_method_selected", { method: "google" });
 		setError(null);
 		setIsWorking(true);
 		try {
@@ -34,32 +36,26 @@ export function GoogleSignIn() {
 			// most of the time and is not something to report.
 			if (!idToken) return;
 
-			await signInWithFirebaseToken(idToken);
+			await signInWithFirebaseToken(idToken, "google");
 		} catch (cause) {
-			setError(authErrorMessage(cause));
+			track("sign_in_failed", { method: "google" });
+			setError(authError(cause));
 		} finally {
 			setIsWorking(false);
 		}
 	};
 
 	return (
-		<View>
-			<FieldError isInvalid={!!error} className="mb-3">
-				{error}
-			</FieldError>
-
-			<Button variant="secondary" onPress={handlePress} isDisabled={busy}>
-				{isWorking ? (
-					<Spinner size="sm" color="default" />
-				) : (
-					<View className="flex-row items-center justify-center gap-2">
-						<Ionicons name="logo-google" size={16} color={foreground} />
-						<Text className="font-medium text-foreground">
-							Continue with Google
-						</Text>
-					</View>
-				)}
-			</Button>
+		<View className="gap-3">
+			<FieldError isInvalid={Boolean(error)}>{error}</FieldError>
+			<ActionButton
+				label={t("auth.google")}
+				icon="logo-google"
+				variant="tertiary"
+				onPress={handlePress}
+				isLoading={isWorking}
+				isDisabled={isSigningIn}
+			/>
 		</View>
 	);
 }

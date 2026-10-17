@@ -227,6 +227,10 @@ per-platform work before it sends a real SMS and runs against Firebase's test
 numbers until then; email and Google work today. See
 [docs/firebase-setup.md](docs/firebase-setup.md).
 
+**Start with [docs/mobile-app.md](docs/mobile-app.md)** for the app: stack, first run, code layout,
+analytics (Google Analytics, Microsoft Clarity), AdMob, EAS builds for Android and iOS, and the
+pre-release checklist. [docs/mobile-integration.md](docs/mobile-integration.md) is the API side.
+
 ## The web panels
 
 Three panels, one app, gated by role. Sign-in is email and password through
