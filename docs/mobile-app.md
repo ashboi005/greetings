@@ -7,6 +7,35 @@ the app itself.
 
 ---
 
+## Pending — blocks a real launch
+
+The app works end to end today (verified on Android against production, October 2026), but four
+things are still owed, all of them console and account work rather than code. Until they are done,
+treat every build as a **test build**.
+
+| # | What | Until it is done | How |
+|---|---|---|---|
+| 1 | **Firebase SHA fingerprints** (Android) and **APNs key** (iOS) | Google sign-in fails on Android; real phone numbers may not receive an SMS. Email sign-in and Firebase *test* numbers work. | Firebase → Project settings → Android app → add SHA-1 and SHA-256 for every key that signs the app: the local test key (below), the EAS key (`eas credentials`), and Play App Signing's key once on Play. Re-download `google-services.json`, replace it in `apps/native/` and in EAS (`GOOGLE_SERVICES_JSON`). iOS: upload an APNs `.p8` key under Cloud Messaging. firebase-setup.md §2.5–2.6. |
+| 2 | **AdMob live ids** | Only Google's test ads show; nothing is earned. | §5 "Going live": app ids + banner and interstitial unit ids as EAS env vars, GDPR message and IDFA explainer in AdMob → Privacy & messaging, `app-ads.txt`. |
+| 3 | **Microsoft Clarity project id** | Clarity does not start (Google Analytics already works). | §4: create the project, set `EXPO_PUBLIC_CLARITY_PROJECT_ID`, keep masking on Strict. |
+| 4 | **Privacy policy URL** | Neither store will accept the app; AdMob requires it too. | Publish one naming Firebase/Google Analytics, AdMob and Microsoft Clarity; set `EXPO_PUBLIC_PRIVACY_POLICY_URL` and add it to both store listings. |
+
+Test APKs built locally are signed with Expo's standard debug key. Registering its fingerprints in
+Firebase (item 1) makes Google sign-in and real phone OTP work on those test builds immediately:
+
+```
+SHA-1:   5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25
+SHA-256: FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C
+```
+
+That key is public (it ships in every Expo template), so it is fine for testing and must never sign
+a store build. Store builds are signed by EAS.
+
+Also before submitting, not blocking testing: the store forms in §7 (Play Data safety, App Store
+privacy labels, listing assets) and a first run on iOS, which has been built on EAS but not yet run.
+
+---
+
 ## 1. Stack
 
 | | |
