@@ -448,6 +448,27 @@ export async function signInWithGoogle(): Promise<string | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Account deletion
+// ---------------------------------------------------------------------------
+
+/**
+ * Deletes the Firebase identity too, after our server has deleted the account.
+ *
+ * Best effort: Firebase refuses with `auth/requires-recent-login` when the
+ * sign-in is old, and asking someone to verify their phone again just to leave
+ * would be hostile. Our account and data are already gone either way; what can
+ * remain is Firebase's record of the phone or email itself, which signing in
+ * again would only turn into a new, empty account.
+ */
+export async function deleteFirebaseUser(): Promise<void> {
+	try {
+		await auth().currentUser?.delete();
+	} catch {
+		// See above — not worth failing the deletion over.
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Sign-out
 // ---------------------------------------------------------------------------
 

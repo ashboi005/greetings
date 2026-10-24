@@ -187,6 +187,9 @@ const plugins: NonNullable<ExpoConfig["plugins"]> = [
 	"expo-dev-client",
 	"@react-native-firebase/app",
 	"@react-native-firebase/auth",
+	// Adds the Crashlytics Gradle plugin (uploads mapping files on release
+	// builds, so crash stacks are readable) and the iOS run script.
+	"@react-native-firebase/crashlytics",
 	[
 		"expo-build-properties",
 		{
@@ -198,7 +201,12 @@ const plugins: NonNullable<ExpoConfig["plugins"]> = [
 				// they are linked statically. Every RNFB module in package.json
 				// must be listed — adding one without listing it here breaks only
 				// the iOS build, and only on the build server.
-				forceStaticLinking: ["RNFBApp", "RNFBAuth", "RNFBAnalytics"],
+				forceStaticLinking: [
+					"RNFBApp",
+					"RNFBAuth",
+					"RNFBAnalytics",
+					"RNFBCrashlytics",
+				],
 			},
 		},
 	],

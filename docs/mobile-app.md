@@ -23,8 +23,8 @@ account, and the App Store forms. The full Android go-live list, including the o
 |---|---|---|---|
 | 1 | **Firebase SHA fingerprints** (Android) and **APNs key** (iOS) | Google sign-in fails on Android; real phone numbers may not receive an SMS. Email sign-in and Firebase *test* numbers work. | Firebase → Project settings → Android app → add SHA-1 and SHA-256 for every key that signs the app: the local test key (below), the EAS key (`eas credentials`), and Play App Signing's key once on Play. Re-download `google-services.json`, replace it in `apps/native/` and in EAS (`GOOGLE_SERVICES_JSON`). iOS: upload an APNs `.p8` key under Cloud Messaging. firebase-setup.md §2.5–2.6. |
 | 2 | **AdMob live ids** | Only Google's test ads show; nothing is earned. | §5 "Going live": app ids + banner and interstitial unit ids as EAS env vars, GDPR message and IDFA explainer in AdMob → Privacy & messaging, `app-ads.txt`. |
-| 3 | **Microsoft Clarity project id** | Clarity does not start (Google Analytics already works). | §4: create the project, set `EXPO_PUBLIC_CLARITY_PROJECT_ID`, keep masking on Strict. |
-| 4 | **Privacy policy URL** | Neither store will accept the app; AdMob requires it too. | Publish one naming Firebase/Google Analytics, AdMob and Microsoft Clarity; set `EXPO_PUBLIC_PRIVACY_POLICY_URL` and add it to both store listings. |
+| 3 | ~~Microsoft Clarity project id~~ **Done** (October 2026) | — | Set in `.env` and on EAS (all environments). Keep masking on Strict in the Clarity dashboard. |
+| 4 | **Privacy policy: final text** | A draft is live at `greetings.ashwathsoni.dev/privacy` (apps/web, once deployed) with [placeholders]. Play will reject an obviously unfinished policy. | Fill `apps/web/src/lib/legal.ts`, have the text reviewed, remove the draft banner. The URL is already set in the app and on EAS. |
 
 Test APKs built locally are signed with Expo's standard debug key. Registering its fingerprints in
 Firebase (item 1) makes Google sign-in and real phone OTP work on those test builds immediately:
@@ -279,12 +279,10 @@ In order. Items marked **code** are engineering work; the rest is accounts, cons
 
 ### Code and backend
 
-- [ ] **code: account deletion.** Play requires any app that creates accounts to offer an in-app
-      "delete my account" *and* a public web page where people can request deletion, and the Data
-      safety form asks for that URL. The backend has no deletion endpoint today
-      (mobile-integration.md §17), so this needs a `DELETE /v1/me` (sessions, profile, designs,
-      uploads; anonymise rather than drop `download_events`, which designers' analytics depend
-      on), a button in Profile, and a small web page.
+- [x] **Account deletion** (done): `DELETE /v1/me`, "Delete my account" at the bottom of
+      Profile, and `https://greetings.ashwathsoni.dev/delete-account` for the Data safety form.
+      **Needs the server and web app deployed** (with migration 0015) before release — until then
+      the in-app button reports an error.
 - [ ] Release signing on EAS: `bunx eas-cli@latest build --profile production --platform android`
       creates the upload key on first run. Then pending item 1: add the SHA-1/SHA-256 of the EAS
       key *and* of Play App Signing's key to Firebase, and re-upload `google-services.json`.
@@ -295,7 +293,7 @@ In order. Items marked **code** are engineering work; the rest is accounts, cons
 
 ### Content and legal
 
-- [ ] **Privacy policy** page (pending item 4), and an **account-deletion** page (above).
+- [ ] **Privacy policy**: final text (pending item 4). The deletion page is done.
 - [ ] **Enough real greetings** published by designers through the panels: the feed opens with
       what is there, and reviewers judge an empty app harshly. Designers must own the rights to
       what they upload; film stills and copyrighted art are the most likely reason for a takedown.
@@ -320,8 +318,9 @@ In order. Items marked **code** are engineering work; the rest is accounts, cons
       the release key (this is the first build where Google sign-in and real OTP must work).
 - [ ] Closed testing (12 testers × 14 days, personal accounts only), then **Production**, staged
       rollout (for example 20%, then 100%).
-- [ ] Worth adding before real users: crash reporting (Firebase Crashlytics fits the existing
-      Firebase setup; add `RNFBCrashlytics` to `forceStaticLinking` if iOS resumes).
+- [x] Crash reporting: Firebase Crashlytics is in (crashes, plus errors caught by the root
+      error boundary, tagged with the opaque user id). Release builds only. Reports appear in
+      Firebase console → Crashlytics after the first crash from a release build.
 
 ### iOS (deferred)
 

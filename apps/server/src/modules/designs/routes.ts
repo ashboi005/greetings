@@ -57,7 +57,7 @@ const MAX_DESIGN_IMAGE_BYTES = 10 * 1024 * 1024;
  */
 export const MAX_DESIGN_JSON_BYTES = 256 * 1024;
 
-const prefixFor = (designId: string) => `designs/${designId}/`;
+export const designPrefix = (designId: string) => `designs/${designId}/`;
 
 function assertJsonSize(value: unknown): void {
 	const bytes = new TextEncoder().encode(JSON.stringify(value)).length;
@@ -314,7 +314,7 @@ export function designRoutes(
 					storage: storage(),
 					// Keyed by design, not by purpose, so both objects for a design sit
 					// together and an orphan is traceable back to it.
-					prefix: prefixFor(params.id),
+					prefix: designPrefix(params.id),
 					mimeType: body.mimeType,
 					bytes: body.bytes,
 					maxBytes: MAX_DESIGN_IMAGE_BYTES,
@@ -351,7 +351,7 @@ export function designRoutes(
 				const user = requireUser(currentUser);
 				await loadOwnDesign(params.id, user.id);
 
-				assertKeyBelongsTo(body.storageKey, prefixFor(params.id));
+				assertKeyBelongsTo(body.storageKey, designPrefix(params.id));
 				await assertUploadedObject({
 					storage: storage(),
 					storageKey: body.storageKey,

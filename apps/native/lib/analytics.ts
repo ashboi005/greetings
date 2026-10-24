@@ -27,6 +27,7 @@ import {
 	setConsent,
 	setUserId,
 } from "@react-native-firebase/analytics";
+import { setCrashUser } from "@/lib/crash-reporting";
 
 type SignInMethod = "phone" | "email" | "google";
 type ShareSource = "feed" | "search" | "detail" | "history";
@@ -80,6 +81,7 @@ export interface AnalyticsEvents {
 	// Profile
 	profile_updated: { has_designation: boolean; has_phone: boolean };
 	logo_uploaded: Record<string, never>;
+	account_deleted: Record<string, never>;
 
 	// Ads — without these an ad-revenue problem looks exactly like a loading bug.
 	ad_interstitial_shown: { trigger: string };
@@ -151,8 +153,12 @@ export function trackScreen(name: string) {
 	if (clarityStarted) void safely(() => Clarity.setCurrentScreenName(name));
 }
 
-/** The opaque server user id, or null on sign-out. Never an email or phone. */
+/**
+ * The opaque server user id, or null on sign-out. Never an email or phone.
+ * Also tags crash reports, so a crash can be matched to a support request.
+ */
 export function identify(userId: string | null) {
+	setCrashUser(userId);
 	void safely(() => setUserId(getAnalytics(), userId));
 	if (clarityStarted && userId)
 		void safely(() => Clarity.setCustomUserId(userId));

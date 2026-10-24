@@ -34,6 +34,15 @@ export async function getMe(): Promise<User> {
 	return res.data;
 }
 
+/**
+ * Permanently deletes the signed-in account (Play requires it). The server
+ * keeps download counts for designers but detaches them from the person.
+ * Callers sign out afterwards; the session is already dead server-side.
+ */
+export async function deleteAccount(): Promise<void> {
+	await api.delete("/v1/me");
+}
+
 export async function getProfile(): Promise<UserProfile> {
 	const res = await api.get<UserProfile>("/v1/me/profile");
 	return res.data;

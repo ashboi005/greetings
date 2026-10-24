@@ -11,6 +11,7 @@ import { type ReactNode, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 
+import { DeleteAccountLink } from "@/components/profile/delete-account";
 import { ActionButton } from "@/components/ui/action-button";
 import { Chip } from "@/components/ui/chip";
 import {
@@ -489,6 +490,8 @@ function ProfileContent({ profile }: { profile: UserProfile }) {
 					variant="danger-soft"
 					onPress={confirmSignOut}
 				/>
+
+				<DeleteAccountLink />
 			</KeyboardAwareScrollView>
 
 			<RegionPickerModal

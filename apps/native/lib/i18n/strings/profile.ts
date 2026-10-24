@@ -41,6 +41,12 @@ export default defineStrings({
 		version: "App version {version}",
 
 		signOut: "Sign out",
+		deleteAccount: "Delete my account",
+		deleteTitle: "Delete your account?",
+		deleteBody:
+			"This permanently deletes:\n• your profile: name, title, phone and logo\n• your designs\n• the list of greetings you saved\n\nIt cannot be undone. Greetings you have already sent stay wherever you sent them.",
+		deleteKeep: "Keep my account",
+		deleteConfirm: "Yes, delete my account",
 		signOutTitle: "Sign out?",
 		signOutBody:
 			"You can sign in again any time with the same number or email.",
@@ -85,6 +91,12 @@ export default defineStrings({
 		version: "ऐप वर्ज़न {version}",
 
 		signOut: "साइन आउट करें",
+		deleteAccount: "मेरा अकाउंट हटाएँ",
+		deleteTitle: "अपना अकाउंट हटाना है?",
+		deleteBody:
+			"इससे हमेशा के लिए हट जाएगा:\n• आपकी प्रोफ़ाइल: नाम, पद, फ़ोन और लोगो\n• आपके डिज़ाइन\n• आपकी सेव की गई ग्रीटिंग्स की सूची\n\nयह वापस नहीं हो सकता। जो ग्रीटिंग्स आप भेज चुके हैं, वे वहीं रहेंगी जहाँ आपने भेजी थीं।",
+		deleteKeep: "अकाउंट रहने दें",
+		deleteConfirm: "हाँ, मेरा अकाउंट हटाएँ",
 		signOutTitle: "साइन आउट करना है?",
 		signOutBody: "आप उसी नंबर या ईमेल से कभी भी फिर साइन इन कर सकते हैं।",
 	},
