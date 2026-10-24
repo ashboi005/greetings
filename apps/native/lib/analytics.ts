@@ -47,6 +47,8 @@ export interface AnalyticsEvents {
 	onboarding_completed: { language_count: number; has_details: boolean };
 
 	// Browsing
+	/** A Categories tile; the category, never the tag's name or id. */
+	category_opened: { category: "occasion" | "festival" | "theme" | "other" };
 	search_performed: {
 		has_query: boolean;
 		has_tag: boolean;

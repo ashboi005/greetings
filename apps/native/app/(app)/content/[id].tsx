@@ -22,6 +22,7 @@ import {
 	greetingThumbnail,
 	TILE_ASPECT_RATIO,
 } from "@/components/ui/greeting-grid";
+import { HeaderButton } from "@/components/ui/header-button";
 import { SafeAreaView } from "@/components/ui/safe-area-view";
 import { SheetModal } from "@/components/ui/sheet-modal";
 import { EmptyState } from "@/components/ui/state-views";
@@ -291,29 +292,6 @@ export default function ContentDetailScreen() {
 }
 
 /** A labelled text button for the top bar; nav chrome, so no fill. */
-function HeaderButton({
-	icon,
-	label,
-	onPress,
-}: {
-	icon: keyof typeof Ionicons.glyphMap;
-	label: string;
-	onPress: () => void;
-}) {
-	const foreground = useThemeColor("foreground");
-	return (
-		<Pressable
-			onPress={onPress}
-			accessibilityRole="button"
-			hitSlop={4}
-			className="min-h-12 flex-row items-center gap-1 rounded-full px-3"
-		>
-			<Ionicons name={icon} size={22} color={foreground} />
-			<Text className="text-base text-foreground">{label}</Text>
-		</Pressable>
-	);
-}
-
 /**
  * Half-width action with the icon above its label, so a long Hindi label can
  * wrap onto a second line instead of being cut off on a 360dp phone.

@@ -13,6 +13,12 @@ The app works end to end today (verified on Android against production, October 
 things are still owed, all of them console and account work rather than code. Until they are done,
 treat every build as a **test build**.
 
+**Launch is Android first. iOS is deferred** (decided October 2026): it builds on EAS but has never
+been run, because nobody on the team currently has a Mac that can run Xcode 16. Picking it back up
+means building and running it on such a Mac (§2 and §6; a step-by-step prompt for a coding agent
+to do exactly that was written and handed over), then the iOS half of item 1, an Apple Developer
+account, and the App Store forms. The full Android go-live list, including the one code change Play requires, is §7.
+
 | # | What | Until it is done | How |
 |---|---|---|---|
 | 1 | **Firebase SHA fingerprints** (Android) and **APNs key** (iOS) | Google sign-in fails on Android; real phone numbers may not receive an SMS. Email sign-in and Firebase *test* numbers work. | Firebase → Project settings → Android app → add SHA-1 and SHA-256 for every key that signs the app: the local test key (below), the EAS key (`eas credentials`), and Play App Signing's key once on Play. Re-download `google-services.json`, replace it in `apps/native/` and in EAS (`GOOGLE_SERVICES_JSON`). iOS: upload an APNs `.p8` key under Cloud Messaging. firebase-setup.md §2.5–2.6. |
@@ -31,8 +37,7 @@ SHA-256: FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B
 That key is public (it ships in every Expo template), so it is fine for testing and must never sign
 a store build. Store builds are signed by EAS.
 
-Also before submitting, not blocking testing: the store forms in §7 (Play Data safety, App Store
-privacy labels, listing assets) and a first run on iOS, which has been built on EAS but not yet run.
+Also before submitting, not blocking testing: everything else in §7.
 
 ---
 
@@ -106,7 +111,8 @@ apps/native/
     (auth)/language.tsx        screen 1: English / हिन्दी
     (auth)/sign-in.tsx         phone · email · Google
     (onboarding)/              content languages → region → optional details
-    (app)/(tabs)/              Home feed · Search · Saved · My Designs · Profile
+    (app)/(tabs)/              Home feed · Categories · Saved · My Designs · Profile
+    (app)/search.tsx           search, and a category's results (opened from Categories)
     (app)/content/[id].tsx     a greeting: Share · Save · Customize & Share · Report
     (app)/customize/[id].tsx   the overlay editor (name, designation, phone, logo)
     (app)/design/[id].tsx      the My Designs editor
@@ -258,19 +264,69 @@ server.
 
 ---
 
-## 7. Before the first store release
+## 7. Going live on Android (Google Play)
 
-- [ ] Firebase phone auth for real SMS: Android SHA-1/SHA-256 for the **EAS upload key** and for
-      **Play App Signing**, re-download `google-services.json` and re-upload it to EAS; APNs key
-      for iOS. See firebase-setup.md §2.5–2.6. Until then only Firebase test numbers work.
-- [ ] Google sign-in: SHA fingerprints above also apply.
-- [ ] AdMob live ids and the privacy messages (§5).
-- [ ] Clarity project id, masking on Strict (§4).
-- [ ] A privacy policy URL naming Firebase/Google Analytics, AdMob and Microsoft Clarity, set as
-      `EXPO_PUBLIC_PRIVACY_POLICY_URL` (shown in Profile) and in both store listings.
-- [ ] Play Data safety form and App Store privacy labels matching what the SDKs collect
-      (device identifiers, app interactions, crash/diagnostics, approximate location via ads).
-- [ ] Store listing assets: screenshots, feature graphic, short and full description (English and Hindi).
+In order. Items marked **code** are engineering work; the rest is accounts, consoles and forms.
+
+### Accounts
+
+- [ ] **Google Play developer account** ($25, one-time), identity verified. Prefer an
+      **organization** account (needs a D-U-N-S number): a *personal* account created after
+      November 2023 must run a **closed test with at least 12 testers opted in for 14 days in a
+      row** before Production unlocks, and the clock restarts if testers drop below 12.
+- [ ] **AdMob account**, with the Android app added (pending item 2).
+- [ ] **Microsoft Clarity** project (pending item 3).
+
+### Code and backend
+
+- [ ] **code: account deletion.** Play requires any app that creates accounts to offer an in-app
+      "delete my account" *and* a public web page where people can request deletion, and the Data
+      safety form asks for that URL. The backend has no deletion endpoint today
+      (mobile-integration.md §17), so this needs a `DELETE /v1/me` (sessions, profile, designs,
+      uploads; anonymise rather than drop `download_events`, which designers' analytics depend
+      on), a button in Profile, and a small web page.
+- [ ] Release signing on EAS: `bunx eas-cli@latest build --profile production --platform android`
+      creates the upload key on first run. Then pending item 1: add the SHA-1/SHA-256 of the EAS
+      key *and* of Play App Signing's key to Firebase, and re-upload `google-services.json`.
+- [ ] Production env vars on EAS (`production` environment): AdMob app ids and unit ids,
+      `EXPO_PUBLIC_CLARITY_PROJECT_ID`, `EXPO_PUBLIC_PRIVACY_POLICY_URL`.
+- [ ] Target API level: already 36 (Android 16), which Play requires for new apps since
+      31 Aug 2026. Re-check every August; it moves up yearly.
+
+### Content and legal
+
+- [ ] **Privacy policy** page (pending item 4), and an **account-deletion** page (above).
+- [ ] **Enough real greetings** published by designers through the panels: the feed opens with
+      what is there, and reviewers judge an empty app harshly. Designers must own the rights to
+      what they upload; film stills and copyrighted art are the most likely reason for a takedown.
+- [ ] `app-ads.txt` on the developer website named in the Play listing (AdMob verifies it).
+
+### Play Console forms
+
+- [ ] **Data safety**: the SDKs collect device identifiers and app interactions (AdMob, Google
+      Analytics, Clarity), approximate location (AdMob), crash diagnostics; the app collects
+      name, phone, email and photos the user uploads. Declare account deletion and its URL.
+- [ ] **Content rating** (IARC questionnaire), **Target audience** (adults; *not* designed for
+      children, or the ads become a Families-policy problem), **Ads: yes**.
+- [ ] **App access**: reviewers need a login. Give them a Firebase test phone number and its
+      code (Firebase → Auth → Phone → test numbers), or an email account.
+- [ ] **Store listing** in English and Hindi: name, short description (80 chars), full description,
+      512×512 icon (`assets/images/icon.png` scaled), 1024×500 feature graphic, 2–8 phone
+      screenshots.
+
+### Release
+
+- [ ] Upload the first AAB to **internal testing**, install from the Play link, smoke-test with
+      the release key (this is the first build where Google sign-in and real OTP must work).
+- [ ] Closed testing (12 testers × 14 days, personal accounts only), then **Production**, staged
+      rollout (for example 20%, then 100%).
+- [ ] Worth adding before real users: crash reporting (Firebase Crashlytics fits the existing
+      Firebase setup; add `RNFBCrashlytics` to `forceStaticLinking` if iOS resumes).
+
+### iOS (deferred)
+
+Apple Developer account ($99/year), APNs key (pending item 1), App Store Connect listing and
+privacy labels, a first run on a Mac with Xcode 16+, then TestFlight. Not started.
 
 ---
 

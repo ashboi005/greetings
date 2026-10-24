@@ -60,10 +60,10 @@ export default function TabsLayout() {
 				}}
 			/>
 			<Tabs.Screen
-				name="search"
+				name="categories"
 				options={{
-					title: t("common.tabSearch"),
-					tabBarIcon: tabIcon("search-outline", "search"),
+					title: t("common.tabCategories"),
+					tabBarIcon: tabIcon("grid-outline", "grid"),
 				}}
 			/>
 			<Tabs.Screen

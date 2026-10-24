@@ -1,10 +1,12 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { SearchField } from "heroui-native";
 import { type ReactNode, useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 
 import { Chip } from "@/components/ui/chip";
 import { feedSummary, GreetingGrid } from "@/components/ui/greeting-grid";
+import { HeaderButton } from "@/components/ui/header-button";
 import {
 	useLanguages,
 	useRegions,
@@ -15,8 +17,9 @@ import { SafeAreaView } from "@/components/ui/safe-area-view";
 import { ScreenHeader } from "@/components/ui/screen-header";
 import { EmptyState } from "@/components/ui/state-views";
 import { track } from "@/lib/analytics";
-import { useT } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
 import { searchContent } from "@/lib/services";
+import { tagLabel } from "@/lib/tag-display";
 import type { Tag } from "@/lib/types";
 
 /** Long enough that a slow typist is not searched mid-word. */
@@ -28,8 +31,14 @@ const MAX_QUERY_LENGTH = 100;
 /** Festivals lead: for this audience, tapping "Diwali" beats typing it. */
 const TAG_CATEGORY_ORDER = ["festival", "occasion", "theme", "language"];
 
-function sortTags(tags: Tag[]): Tag[] {
+/**
+ * The tag this screen was opened with goes first: coming from a Categories tile
+ * it would otherwise sit scrolled off-screen, and the filter would look unset.
+ * Only that one — moving whichever chip is tapped would make the row jump.
+ */
+function sortTags(tags: Tag[], pinnedId: string | null): Tag[] {
 	const rank = (tag: Tag) => {
+		if (tag.id === pinnedId) return -1;
 		const index = TAG_CATEGORY_ORDER.indexOf(tag.category);
 		return index === -1 ? TAG_CATEGORY_ORDER.length : index;
 	};
@@ -43,12 +52,22 @@ function sortTags(tags: Tag[]): Tag[] {
  * filters (§5), so tapping a festival chip is a search with no `q`. Spelling
  * mistakes are the server's job — it has a fuzzy fallback — so nothing here
  * tries to correct them.
+ *
+ * Opened from the Categories tab: with `tagId` (and its display `title`) when
+ * a category tile was tapped, or with `focus` when the search box was.
  */
 export default function SearchScreen() {
-	const t = useT();
+	// `uiLanguage`: the app's own language. `language` below is the content filter.
+	const { t, language: uiLanguage } = useI18n();
+	const router = useRouter();
+	const params = useLocalSearchParams<{
+		tagId?: string;
+		title?: string;
+		focus?: string;
+	}>();
 	const [text, setText] = useState("");
 	const [q, setQ] = useState("");
-	const [tagId, setTagId] = useState<string | null>(null);
+	const [tagId, setTagId] = useState<string | null>(params.tagId ?? null);
 	const [language, setLanguage] = useState<string | null>(null);
 	const [region, setRegion] = useState<string | null>(null);
 	const [regionPickerOpen, setRegionPickerOpen] = useState(false);
@@ -102,7 +121,14 @@ export default function SearchScreen() {
 
 	const header = (
 		<View className="gap-4 pb-5">
-			<ScreenHeader title={t("search.title")} />
+			<View className="-mx-2 -mb-2 flex-row">
+				<HeaderButton
+					icon="chevron-back"
+					label={t("common.back")}
+					onPress={() => router.back()}
+				/>
+			</View>
+			<ScreenHeader title={params.title || t("search.title")} />
 
 			<SearchField value={text} onChange={setText}>
 				<SearchField.Group>
@@ -111,6 +137,7 @@ export default function SearchScreen() {
 						placeholder={t("search.placeholder")}
 						maxLength={MAX_QUERY_LENGTH}
 						returnKeyType="search"
+						autoFocus={params.focus === "1"}
 						onSubmitEditing={() => setQ(text.trim())}
 						className="text-base"
 					/>
@@ -120,10 +147,10 @@ export default function SearchScreen() {
 
 			{tags.data && tags.data.length > 0 ? (
 				<FilterRow label={t("search.festivals")}>
-					{sortTags(tags.data).map((tag) => (
+					{sortTags(tags.data, params.tagId ?? null).map((tag) => (
 						<Chip
 							key={tag.id}
-							label={tag.label}
+							label={tagLabel(tag, uiLanguage)}
 							selected={tagId === tag.id}
 							onPress={() => setTagId(tagId === tag.id ? null : tag.id)}
 						/>
@@ -161,7 +188,10 @@ export default function SearchScreen() {
 						accessibilityRole="button"
 						className="min-h-12 justify-center px-2"
 					>
-						<Text className="font-semibold text-accent text-base">
+						<Text
+							className="font-semibold text-accent text-base"
+							textBreakStrategy="simple"
+						>
 							{t("search.clearAll")}
 						</Text>
 					</Pressable>

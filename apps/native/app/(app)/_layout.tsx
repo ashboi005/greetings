@@ -9,6 +9,7 @@ export default function AppLayout() {
 	return (
 		<Stack screenOptions={{ headerShown: false }}>
 			<Stack.Screen name="(tabs)" />
+			<Stack.Screen name="search" />
 			<Stack.Screen name="content/[id]" />
 			<Stack.Screen name="customize/[id]" options={{ gestureEnabled: false }} />
 			<Stack.Screen name="design/[id]" options={{ gestureEnabled: false }} />

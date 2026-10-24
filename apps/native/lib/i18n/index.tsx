@@ -11,6 +11,7 @@ import {
 import { getPref, setPref } from "@/lib/prefs";
 import type { AppLanguage } from "./define";
 import auth from "./strings/auth";
+import categories from "./strings/categories";
 import common from "./strings/common";
 import content from "./strings/content";
 import designs from "./strings/designs";
@@ -39,6 +40,7 @@ const namespaces = {
 	auth,
 	onboarding,
 	feed,
+	categories,
 	search,
 	content,
 	downloads,
