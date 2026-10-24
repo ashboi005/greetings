@@ -1,16 +1,10 @@
-import {
-	Button,
-	FieldError,
-	Input,
-	Label,
-	Spinner,
-	TextField,
-} from "heroui-native";
+import { FieldError, Input, Label, TextField } from "heroui-native";
 import { useRef, useState } from "react";
 import { Pressable, Text, type TextInput, View } from "react-native";
 
+import { ActionButton } from "@/components/ui/action-button";
 import { useAuth } from "@/contexts/auth-context";
-import { authErrorMessage } from "@/lib/auth-errors";
+import { track } from "@/lib/analytics";
 import {
 	EmailNotVerifiedError,
 	resendEmailVerification,
@@ -18,6 +12,8 @@ import {
 	signInWithEmail,
 	signUpWithEmail,
 } from "@/lib/firebase";
+import { useT } from "@/lib/i18n";
+import { useAuthError } from "./use-auth-error";
 
 /**
  * Email and password sign-in, with the confirmation step it requires.
@@ -40,6 +36,8 @@ type Mode = "signIn" | "signUp" | "awaitVerify";
 
 export function EmailSignIn() {
 	const { signInWithFirebaseToken, isSigningIn } = useAuth();
+	const t = useT();
+	const authError = useAuthError();
 
 	const [mode, setMode] = useState<Mode>("signIn");
 	const [email, setEmail] = useState("");
@@ -60,13 +58,13 @@ export function EmailSignIn() {
 	};
 
 	const validate = (): string | null => {
-		if (!email.trim()) return "Enter your email address.";
-		if (!password) return "Enter your password.";
+		if (!email.trim()) return t("auth.enterEmail");
+		if (!password) return t("auth.errEnterPassword");
 		if (mode === "signUp") {
 			if (password.length < MIN_PASSWORD_LENGTH) {
-				return `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
+				return t("auth.passwordTooShort", { length: MIN_PASSWORD_LENGTH });
 			}
-			if (password !== confirmPassword) return "Those passwords do not match.";
+			if (password !== confirmPassword) return t("auth.passwordMismatch");
 		}
 		return null;
 	};
@@ -78,29 +76,29 @@ export function EmailSignIn() {
 			return;
 		}
 
+		track("sign_in_method_selected", { method: "email" });
 		clearMessages();
 		setIsWorking(true);
 		try {
 			if (mode === "signUp") {
 				await signUpWithEmail(email, password);
 				setMode("awaitVerify");
-				setNotice(
-					`We sent a confirmation link to ${email.trim()}. Follow it, then sign in.`,
-				);
+				setNotice(t("auth.verifySent", { email: email.trim() }));
 				return;
 			}
 
 			const idToken = await signInWithEmail(email, password);
-			await signInWithFirebaseToken(idToken);
+			await signInWithFirebaseToken(idToken, "email");
 		} catch (cause) {
 			// Not a correction to make but a step to take, so it gets its own state
 			// rather than a red line under the password field.
 			if (cause instanceof EmailNotVerifiedError) {
 				setMode("awaitVerify");
-				setNotice(cause.message);
+				setNotice(authError(cause));
 				return;
 			}
-			setError(authErrorMessage(cause));
+			track("sign_in_failed", { method: "email" });
+			setError(authError(cause));
 		} finally {
 			setIsWorking(false);
 		}
@@ -111,9 +109,9 @@ export function EmailSignIn() {
 		setIsWorking(true);
 		try {
 			await resendEmailVerification(email, password);
-			setNotice(`Sent again to ${email.trim()}.`);
+			setNotice(t("auth.verifyResent", { email: email.trim() }));
 		} catch (cause) {
-			setError(authErrorMessage(cause));
+			setError(authError(cause));
 		} finally {
 			setIsWorking(false);
 		}
@@ -121,7 +119,7 @@ export function EmailSignIn() {
 
 	const handleForgotPassword = async () => {
 		if (!email.trim()) {
-			setError("Enter your email address first.");
+			setError(t("auth.enterEmailFirst"));
 			return;
 		}
 
@@ -129,9 +127,9 @@ export function EmailSignIn() {
 		setIsWorking(true);
 		try {
 			await sendPasswordReset(email);
-			setNotice("If that address has an account, a reset link is on its way.");
+			setNotice(t("auth.resetSent"));
 		} catch (cause) {
-			setError(authErrorMessage(cause));
+			setError(authError(cause));
 		} finally {
 			setIsWorking(false);
 		}
@@ -143,50 +141,49 @@ export function EmailSignIn() {
 		setConfirmPassword("");
 	};
 
+	const noticeView = notice ? (
+		<View className="rounded-2xl bg-accent-soft p-4">
+			<Text className="text-accent-soft-foreground text-base">{notice}</Text>
+		</View>
+	) : null;
+
 	if (mode === "awaitVerify") {
 		return (
-			<View className="gap-4">
-				<FieldError isInvalid={!!error}>{error}</FieldError>
+			<View className="gap-5">
+				{noticeView}
+				<Text className="text-base text-muted">{t("auth.verifyHelp")}</Text>
+				<FieldError isInvalid={Boolean(error)}>{error}</FieldError>
 
-				{notice ? (
-					<Text className="text-foreground text-sm">{notice}</Text>
-				) : null}
-
-				<Text className="text-muted-foreground text-xs">
-					The link opens in your browser and confirms the address. Come back
-					here afterwards — nothing else to do.
-				</Text>
-
-				<Button onPress={handleSubmit} isDisabled={busy}>
-					{busy ? (
-						<Spinner size="sm" color="default" />
-					) : (
-						<Button.Label>I have confirmed it — sign me in</Button.Label>
-					)}
-				</Button>
+				<ActionButton
+					label={t("auth.verifyDone")}
+					icon="checkmark-circle-outline"
+					onPress={handleSubmit}
+					isLoading={busy}
+				/>
 
 				<View className="flex-row items-center justify-between">
-					<Pressable onPress={() => switchMode("signIn")} disabled={busy}>
-						<Text className="text-muted-foreground text-sm">Back</Text>
-					</Pressable>
-					<Pressable onPress={handleResend} disabled={busy}>
-						<Text className="text-primary text-sm">Send it again</Text>
-					</Pressable>
+					<TextLink
+						label={t("common.back")}
+						onPress={() => switchMode("signIn")}
+						disabled={busy}
+					/>
+					<TextLink
+						label={t("auth.verifyResend")}
+						onPress={handleResend}
+						disabled={busy}
+						accent
+					/>
 				</View>
 			</View>
 		);
 	}
 
 	return (
-		<View className="gap-4">
-			<FieldError isInvalid={!!error}>{error}</FieldError>
-
-			{notice ? (
-				<Text className="text-foreground text-sm">{notice}</Text>
-			) : null}
+		<View className="gap-5">
+			{noticeView}
 
 			<TextField>
-				<Label>Email</Label>
+				<Label>{t("auth.emailLabel")}</Label>
 				<Input
 					value={email}
 					onChangeText={(next) => {
@@ -200,14 +197,15 @@ export function EmailSignIn() {
 					autoComplete="email"
 					textContentType="emailAddress"
 					returnKeyType="next"
-					blurOnSubmit={false}
+					submitBehavior="submit"
 					onSubmitEditing={() => passwordRef.current?.focus()}
 					editable={!busy}
+					className="text-base"
 				/>
 			</TextField>
 
 			<TextField>
-				<Label>Password</Label>
+				<Label>{t("auth.passwordLabel")}</Label>
 				<Input
 					ref={passwordRef}
 					value={password}
@@ -221,17 +219,18 @@ export function EmailSignIn() {
 					autoComplete={mode === "signUp" ? "new-password" : "password"}
 					textContentType={mode === "signUp" ? "newPassword" : "password"}
 					returnKeyType={mode === "signUp" ? "next" : "go"}
-					blurOnSubmit={mode !== "signUp"}
+					submitBehavior={mode === "signUp" ? "submit" : "blurAndSubmit"}
 					onSubmitEditing={() =>
 						mode === "signUp" ? confirmRef.current?.focus() : handleSubmit()
 					}
 					editable={!busy}
+					className="text-base"
 				/>
 			</TextField>
 
 			{mode === "signUp" ? (
 				<TextField>
-					<Label>Confirm password</Label>
+					<Label>{t("auth.confirmPasswordLabel")}</Label>
 					<Input
 						ref={confirmRef}
 						value={confirmPassword}
@@ -247,40 +246,68 @@ export function EmailSignIn() {
 						returnKeyType="go"
 						onSubmitEditing={handleSubmit}
 						editable={!busy}
+						className="text-base"
 					/>
 				</TextField>
 			) : null}
 
-			<Button onPress={handleSubmit} isDisabled={busy}>
-				{busy ? (
-					<Spinner size="sm" color="default" />
-				) : (
-					<Button.Label>
-						{mode === "signUp" ? "Create account" : "Sign in"}
-					</Button.Label>
-				)}
-			</Button>
+			<FieldError isInvalid={Boolean(error)}>{error}</FieldError>
 
-			<View className="flex-row items-center justify-between">
-				<Pressable
+			<ActionButton
+				label={mode === "signUp" ? t("auth.createAccount") : t("auth.signIn")}
+				icon={mode === "signUp" ? "person-add-outline" : "log-in-outline"}
+				onPress={handleSubmit}
+				isLoading={busy}
+			/>
+
+			<View className="flex-row flex-wrap items-center justify-between gap-2">
+				<TextLink
+					label={
+						mode === "signUp" ? t("auth.haveAccount") : t("auth.newAccount")
+					}
 					onPress={() => switchMode(mode === "signUp" ? "signIn" : "signUp")}
 					disabled={busy}
-				>
-					<Text className="text-primary text-sm">
-						{mode === "signUp"
-							? "I already have an account"
-							: "Create an account"}
-					</Text>
-				</Pressable>
-
+					accent
+				/>
 				{mode === "signIn" ? (
-					<Pressable onPress={handleForgotPassword} disabled={busy}>
-						<Text className="text-muted-foreground text-sm">
-							Forgot password?
-						</Text>
-					</Pressable>
+					<TextLink
+						label={t("auth.forgotPassword")}
+						onPress={handleForgotPassword}
+						disabled={busy}
+					/>
 				) : null}
 			</View>
 		</View>
+	);
+}
+
+function TextLink({
+	label,
+	onPress,
+	disabled,
+	accent,
+}: {
+	label: string;
+	onPress: () => void;
+	disabled: boolean;
+	accent?: boolean;
+}) {
+	return (
+		<Pressable
+			onPress={onPress}
+			disabled={disabled}
+			accessibilityRole="button"
+			className="min-h-12 justify-center"
+		>
+			<Text
+				className={
+					accent
+						? "font-semibold text-accent text-base"
+						: "text-base text-foreground"
+				}
+			>
+				{label}
+			</Text>
+		</Pressable>
 	);
 }

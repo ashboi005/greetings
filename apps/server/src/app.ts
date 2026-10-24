@@ -23,6 +23,7 @@ import { designRoutes } from "./modules/designs/routes";
 import { downloadRoutes } from "./modules/downloads/routes";
 import { feedRoutes } from "./modules/feed/routes";
 import { moderationRoutes } from "./modules/moderation/routes";
+import { accountRoutes } from "./modules/profile/account";
 import { avatarRoutes } from "./modules/profile/avatar";
 import { downloadHistoryRoutes } from "./modules/profile/history";
 import { profileRoutes } from "./modules/profile/routes";
@@ -167,6 +168,7 @@ export function createApp(options: AppOptions = {}) {
 			.use(authRoutes(options.tokenVerifier))
 			.use(profileRoutes({ publicBaseUrl }))
 			.use(avatarRoutes(getStorage, { publicBaseUrl }))
+			.use(accountRoutes(getStorage))
 			.use(downloadHistoryRoutes({ publicBaseUrl }))
 			.use(designRoutes(getStorage, { publicBaseUrl }))
 			.use(adminRoleRoutes())

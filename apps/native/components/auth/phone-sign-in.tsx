@@ -1,23 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
 import {
-	Button,
+	Description,
 	FieldError,
 	Input,
 	Label,
-	Spinner,
 	TextField,
 	useThemeColor,
 } from "heroui-native";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, type TextInput, View } from "react-native";
 
+import { ActionButton } from "@/components/ui/action-button";
 import { useAuth } from "@/contexts/auth-context";
-import { authErrorMessage } from "@/lib/auth-errors";
+import { track } from "@/lib/analytics";
 import {
 	type PendingVerification,
 	sendVerificationCode,
 	toE164,
 } from "@/lib/firebase";
+import { useT } from "@/lib/i18n";
+import { useAuthError } from "./use-auth-error";
 
 /**
  * Phone sign-in: number, then the code.
@@ -38,7 +40,13 @@ const RESEND_COOLDOWN_SECONDS = 30;
 
 export function PhoneSignIn() {
 	const { signInWithFirebaseToken, isSigningIn } = useAuth();
-	const mutedColor = useThemeColor("muted");
+	const t = useT();
+	const authError = useAuthError();
+	const [foreground, accent, muted] = useThemeColor([
+		"foreground",
+		"accent",
+		"muted",
+	]);
 
 	const [phoneInput, setPhoneInput] = useState("");
 	const [code, setCode] = useState("");
@@ -60,10 +68,11 @@ export function PhoneSignIn() {
 	const handleSendCode = async () => {
 		const e164 = toE164(phoneInput);
 		if (!e164) {
-			setError("Enter a 10-digit mobile number, or a full +country number.");
+			setError(t("auth.phoneInvalid"));
 			return;
 		}
 
+		track("sign_in_method_selected", { method: "phone" });
 		setError(null);
 		setIsSending(true);
 		try {
@@ -75,7 +84,8 @@ export function PhoneSignIn() {
 			// has to wait for that render to commit.
 			requestAnimationFrame(() => codeInputRef.current?.focus());
 		} catch (cause) {
-			setError(authErrorMessage(cause));
+			track("sign_in_failed", { method: "phone" });
+			setError(authError(cause));
 		} finally {
 			setIsSending(false);
 		}
@@ -85,7 +95,7 @@ export function PhoneSignIn() {
 		if (!pending) return;
 
 		if (code.trim().length !== CODE_LENGTH) {
-			setError(`Enter the ${CODE_LENGTH}-digit code.`);
+			setError(t("auth.codeIncomplete", { length: CODE_LENGTH }));
 			return;
 		}
 
@@ -94,9 +104,10 @@ export function PhoneSignIn() {
 			// Firebase authenticates; the context trades the ID token for our
 			// session and routes onward, so there is nothing to do on success.
 			const idToken = await pending.confirm(code.trim());
-			await signInWithFirebaseToken(idToken);
+			await signInWithFirebaseToken(idToken, "phone");
 		} catch (cause) {
-			setError(authErrorMessage(cause));
+			track("sign_in_failed", { method: "phone" });
+			setError(authError(cause));
 			setCode("");
 		}
 	};
@@ -108,101 +119,112 @@ export function PhoneSignIn() {
 		setCooldown(0);
 	};
 
+	if (pending === null) {
+		return (
+			<View className="gap-5">
+				<TextField isInvalid={Boolean(error)}>
+					<Label>{t("auth.phoneLabel")}</Label>
+					<Input
+						value={phoneInput}
+						onChangeText={(next) => {
+							setPhoneInput(next);
+							setError(null);
+						}}
+						placeholder="98765 43210"
+						keyboardType="phone-pad"
+						autoComplete="tel"
+						textContentType="telephoneNumber"
+						returnKeyType="go"
+						onSubmitEditing={handleSendCode}
+						editable={!busy}
+						className="text-lg"
+					/>
+					<Description className="text-sm">{t("auth.phoneHint")}</Description>
+					<FieldError>{error}</FieldError>
+				</TextField>
+
+				<ActionButton
+					label={t("auth.sendCode")}
+					icon="chatbubble-ellipses-outline"
+					onPress={handleSendCode}
+					isLoading={isSending}
+					isDisabled={busy}
+				/>
+			</View>
+		);
+	}
+
 	return (
-		<View>
-			<FieldError isInvalid={!!error} className="mb-3">
-				{error}
-			</FieldError>
+		<View className="gap-5">
+			<Text className="text-base text-muted">
+				{t("auth.codeSentTo", { phone: pending.phoneNumber })}
+			</Text>
 
-			{pending === null ? (
-				<View className="gap-4">
-					<TextField>
-						<Label>Phone number</Label>
-						<Input
-							value={phoneInput}
-							onChangeText={(next) => {
-								setPhoneInput(next);
-								setError(null);
-							}}
-							placeholder="98765 43210"
-							keyboardType="phone-pad"
-							autoComplete="tel"
-							textContentType="telephoneNumber"
-							returnKeyType="go"
-							onSubmitEditing={handleSendCode}
-							editable={!busy}
-						/>
-					</TextField>
+			<TextField isInvalid={Boolean(error)}>
+				<Label>{t("auth.codeLabel", { length: CODE_LENGTH })}</Label>
+				<Input
+					ref={codeInputRef}
+					value={code}
+					onChangeText={(next) => {
+						setCode(next.replace(/\D/g, "").slice(0, CODE_LENGTH));
+						setError(null);
+					}}
+					placeholder="123456"
+					keyboardType="number-pad"
+					autoComplete="sms-otp"
+					textContentType="oneTimeCode"
+					maxLength={CODE_LENGTH}
+					editable={!busy}
+					className="text-center text-2xl tracking-[8px]"
+				/>
+				<FieldError>{error}</FieldError>
+			</TextField>
 
-					<Text className="text-muted-foreground text-xs">
-						Indian numbers need no country code. For anywhere else, start with
-						+.
+			<ActionButton
+				label={t("auth.verify")}
+				icon="checkmark-circle-outline"
+				onPress={handleVerify}
+				isLoading={isSigningIn}
+				isDisabled={busy}
+			/>
+
+			<View className="flex-row items-center justify-between">
+				<Pressable
+					onPress={handleChangeNumber}
+					disabled={busy}
+					accessibilityRole="button"
+					className="min-h-12 flex-row items-center gap-1"
+				>
+					<Ionicons name="chevron-back" size={18} color={foreground} />
+					<Text className="text-base text-foreground">
+						{t("auth.changeNumber")}
 					</Text>
+				</Pressable>
 
-					<Button onPress={handleSendCode} isDisabled={busy}>
-						{isSending ? (
-							<Spinner size="sm" color="default" />
-						) : (
-							<Button.Label>Send code</Button.Label>
-						)}
-					</Button>
-				</View>
-			) : (
-				<View className="gap-4">
-					<Text className="text-muted-foreground text-sm">
-						Code sent to {pending.phoneNumber}
+				<Pressable
+					onPress={handleSendCode}
+					disabled={busy || cooldown > 0}
+					accessibilityRole="button"
+					className="min-h-12 flex-row items-center gap-1"
+				>
+					<Ionicons
+						name="refresh"
+						size={18}
+						color={cooldown > 0 ? muted : accent}
+					/>
+					<Text
+						className={
+							cooldown > 0
+								? "text-base text-muted"
+								: "font-semibold text-accent text-base"
+						}
+					>
+						{cooldown > 0
+							? t("auth.resendIn", { seconds: cooldown })
+							: t("auth.resend")}
 					</Text>
-
-					<TextField>
-						<Label>{CODE_LENGTH}-digit code</Label>
-						<Input
-							ref={codeInputRef}
-							value={code}
-							onChangeText={(next) => {
-								setCode(next.replace(/\D/g, "").slice(0, CODE_LENGTH));
-								setError(null);
-							}}
-							placeholder="123456"
-							keyboardType="number-pad"
-							autoComplete="sms-otp"
-							textContentType="oneTimeCode"
-							maxLength={CODE_LENGTH}
-							editable={!busy}
-						/>
-					</TextField>
-
-					<Button onPress={handleVerify} isDisabled={busy}>
-						{isSigningIn ? (
-							<Spinner size="sm" color="default" />
-						) : (
-							<Button.Label>Verify and sign in</Button.Label>
-						)}
-					</Button>
-
-					<View className="flex-row items-center justify-between">
-						<Pressable onPress={handleChangeNumber} disabled={busy}>
-							<View className="flex-row items-center gap-1">
-								<Ionicons name="chevron-back" size={14} color={mutedColor} />
-								<Text className="text-muted-foreground text-sm">
-									Change number
-								</Text>
-							</View>
-						</Pressable>
-
-						<Pressable onPress={handleSendCode} disabled={busy || cooldown > 0}>
-							<Text
-								className={
-									cooldown > 0
-										? "text-muted-foreground text-sm"
-										: "text-primary text-sm"
-								}
-							>
-								{cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
-							</Text>
-						</Pressable>
-					</View>
-				</View>
-			)}
+				</Pressable>
+			</View>
 		</View>
 	);
 }

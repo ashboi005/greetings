@@ -802,6 +802,22 @@ one, or you will silently wipe the user's designation.
 
 `GET /v1/me/designs` (§10).
 
+### Deleting the account — `DELETE /v1/me`
+
+Google Play requires an in-app way to delete an account, so there is one. Returns `{ "ok": true }`.
+
+- **App users only.** Panel accounts get `403 FORBIDDEN`; a super admin removes those.
+- **Immediate and permanent.** Sessions, profile, languages, designs, reports and the logo and
+  design images in storage are deleted; the token is dead on the next request (`401`).
+- **Download records are kept, unlinked.** `download_events.user_id` becomes null, so designers'
+  counts and region breakdowns do not change. Download history goes with the account, since it
+  was only ever reachable through it.
+- **Firebase is the app's job.** The server cannot delete the Firebase identity; the app calls
+  `currentUser.delete()` best-effort afterwards and then signs out as usual. Signing in again with
+  the same phone or email starts a fresh, empty account.
+- The web page Play also requires, for people without the app, is
+  `https://greetings.ashwathsoni.dev/delete-account` (apps/web).
+
 ---
 
 ## 12. First-launch sequence
@@ -980,7 +996,6 @@ So you do not go looking:
 - **No push notifications.** No device token registration endpoint.
 - **No favourites or collections.** Download history exists (§11); a "save for later" list does not.
 - **No following a designer**, no comments, no likes, no sharing counters.
-- **No account deletion endpoint.**
 - **No server-side image processing.** No resizing pipeline, no stored thumbnail variants, no format
   conversion, and no overlay compositing. Resizing happens at the CDN edge (§8) and overlays happen
   on the device (§9). There is nothing to request and nothing to wait for.

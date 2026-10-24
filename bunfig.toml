@@ -1,0 +1,7 @@
+[install]
+# Hoisted, not isolated: Expo's native autolinking (Gradle and CocoaPods) walks
+# node_modules expecting one copy of each native module. The isolated layout
+# leaves several same-version copies of expo, expo-constants, expo-font and
+# friends, which expo-doctor reports as duplicate native modules and which can
+# break `expo prebuild` and the native builds outright.
+linker = "hoisted"

@@ -34,7 +34,7 @@ import { authGuard, requireUser } from "../auth/session";
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 /** Keys are namespaced per user, which is what makes the confirm step safe. */
-const prefixFor = (userId: string) => `avatars/${userId}/`;
+export const avatarPrefix = (userId: string) => `avatars/${userId}/`;
 
 export function avatarRoutes(
 	storage: () => ObjectStorage,
@@ -49,7 +49,7 @@ export function avatarRoutes(
 				const user = requireUser(currentUser);
 				return presignImageUpload({
 					storage: storage(),
-					prefix: prefixFor(user.id),
+					prefix: avatarPrefix(user.id),
 					mimeType: body.mimeType,
 					bytes: body.bytes,
 					maxBytes: MAX_AVATAR_BYTES,
@@ -85,7 +85,7 @@ export function avatarRoutes(
 			async ({ currentUser, body }) => {
 				const user = requireUser(currentUser);
 
-				assertKeyBelongsTo(body.storageKey, prefixFor(user.id));
+				assertKeyBelongsTo(body.storageKey, avatarPrefix(user.id));
 				await assertUploadedObject({
 					storage: storage(),
 					storageKey: body.storageKey,

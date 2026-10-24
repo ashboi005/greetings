@@ -8,12 +8,14 @@ import {
 	useEffect,
 	useState,
 } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, AppState, View } from "react-native";
 
+import { identify, track } from "@/lib/analytics";
 import { setUnauthenticatedHandler } from "@/lib/api";
 import { signOutOfFirebase } from "@/lib/firebase";
+import { useI18n } from "@/lib/i18n";
 import { queryClient } from "@/lib/query-client";
-import { authWithFirebase, getProfile } from "@/lib/services";
+import { authWithFirebase, getMe, getProfile } from "@/lib/services";
 import { TOKEN_STORAGE_KEY, tokenStorage } from "@/lib/storage";
 import type { UserProfile } from "@/lib/types";
 
@@ -38,6 +40,8 @@ import type { UserProfile } from "@/lib/types";
  */
 type AuthStatus = "loading" | "signedOut" | "signedIn";
 
+export type SignInMethod = "phone" | "email" | "google";
+
 interface AuthContextType {
 	token: string | null;
 	userProfile: UserProfile | null;
@@ -51,7 +55,10 @@ interface AuthContextType {
 	 * the guard treating the app as still booting and re-running its redirects.
 	 */
 	isSigningIn: boolean;
-	signInWithFirebaseToken: (idToken: string) => Promise<void>;
+	signInWithFirebaseToken: (
+		idToken: string,
+		method: SignInMethod,
+	) => Promise<void>;
 	signOut: () => Promise<void>;
 	refreshProfile: () => Promise<UserProfile | null>;
 }
@@ -100,6 +107,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	const router = useRouter();
 	const segments = useSegments();
+	const { hasChosenLanguage } = useI18n();
 	const navigationState = useRootNavigationState();
 
 	const handleSignOut = useCallback(async () => {
@@ -107,6 +115,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		setToken(null);
 		setUserProfile(null);
 		setStatus("signedOut");
+		identify(null);
 
 		// Firebase keeps its own session, and a lingering `currentUser` can mint a
 		// fresh ID token that the exchange would honour — a signed-out app quietly
@@ -134,12 +143,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		return outcome.profile;
 	}, []);
 
+	// A cold start with no connection leaves the session in place but the
+	// profile unknown, and nothing else ever asks again: onboarding cannot be
+	// judged and Customize has no name to print. So while that lasts, keep
+	// trying — when the app comes back to the foreground, and on a slow timer.
+	// A 401 on the way still signs out through the axios interceptor.
+	useEffect(() => {
+		if (status !== "signedIn" || userProfile) return;
+
+		const retry = () => void refreshProfile();
+		const timer = setInterval(retry, 15_000);
+		const subscription = AppState.addEventListener("change", (state) => {
+			if (state === "active") retry();
+		});
+		return () => {
+			clearInterval(timer);
+			subscription.remove();
+		};
+	}, [status, userProfile, refreshProfile]);
+
 	const signInWithFirebaseToken = useCallback(
-		async (idToken: string) => {
+		async (idToken: string, method: SignInMethod) => {
 			setIsSigningIn(true);
 			try {
 				const session = await authWithFirebase(idToken);
 				await tokenStorage.setItem(TOKEN_STORAGE_KEY, session.token);
+				identify(session.user.id);
+				track("sign_in_succeeded", { method, new_user: session.created });
 
 				// Anything cached belongs to whoever was signed in before.
 				queryClient.clear();
@@ -182,6 +212,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				if (outcome.ok) {
 					setUserProfile(outcome.profile);
 					setStatus("signedIn");
+					// The opaque server id is the only identifier analytics ever
+					// gets (§14). Fire-and-forget: nothing waits on it.
+					getMe()
+						.then((me) => identify(me.id))
+						.catch(() => {});
 					return;
 				}
 
@@ -218,7 +253,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		const inOnboarding = group === "(onboarding)";
 
 		if (status === "signedOut") {
-			if (!inAuthGroup) router.replace("/(auth)/sign-in");
+			// Screen 1 is the app's own language; it comes before sign-in so the
+			// sign-in screen is already in the language the person reads.
+			const onLanguage = (segments as string[])[1] === "language";
+			if (!hasChosenLanguage) {
+				if (!onLanguage) router.replace("/(auth)/language");
+			} else if (!inAuthGroup || onLanguage) {
+				router.replace("/(auth)/sign-in");
+			}
 			return;
 		}
 
@@ -231,7 +273,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		}
 
 		if (inAuthGroup || (inOnboarding && userProfile?.onboarded)) {
-			router.replace("/(drawer)/(tabs)");
+			router.replace("/(app)/(tabs)");
 		}
 	}, [
 		navigationState?.key,
@@ -240,6 +282,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		segments,
 		userProfile,
 		router,
+		hasChosenLanguage,
 	]);
 
 	return (

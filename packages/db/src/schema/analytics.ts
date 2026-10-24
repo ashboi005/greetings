@@ -48,9 +48,14 @@ export const downloadEvents = pgTable(
 		designerId: text("designer_id")
 			.notNull()
 			.references(() => user.id, { onDelete: "cascade" }),
-		userId: text("user_id")
-			.notNull()
-			.references(() => user.id, { onDelete: "cascade" }),
+		/**
+		 * Null once the reader has deleted their account. The download still
+		 * happened and still counts for the designer, so the event outlives the
+		 * person; only the link to who it was is cut (DELETE /v1/me).
+		 */
+		userId: text("user_id").references(() => user.id, {
+			onDelete: "set null",
+		}),
 		// Null when the user downloaded before completing onboarding.
 		regionCode: text("region_code").references(() => regions.code),
 		languageCode: text("language_code").references(() => languages.code),

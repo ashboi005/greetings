@@ -1,32 +1,32 @@
-import { Link, Stack } from "expo-router";
-import { Button, Surface } from "heroui-native";
-import { Text, View } from "react-native";
+import { useRouter } from "expo-router";
 
-import { Container } from "@/components/container";
+import { ActionButton } from "@/components/ui/action-button";
+import { SafeAreaView } from "@/components/ui/safe-area-view";
+import { EmptyState } from "@/components/ui/state-views";
+import { useT } from "@/lib/i18n";
 
+/**
+ * Reached only through a bad deep link. "Home" goes to the root and lets the
+ * auth guard decide where that is for this person right now.
+ */
 export default function NotFoundScreen() {
+	const t = useT();
+	const router = useRouter();
+
 	return (
-		<>
-			<Stack.Screen options={{ title: "Not Found" }} />
-			<Container>
-				<View className="flex-1 items-center justify-center p-4">
-					<Surface
-						variant="secondary"
-						className="max-w-sm items-center rounded-lg p-6"
-					>
-						<Text className="mb-3 text-4xl">🤔</Text>
-						<Text className="mb-1 font-medium text-foreground text-lg">
-							Page Not Found
-						</Text>
-						<Text className="mb-4 text-center text-muted text-sm">
-							The page you're looking for doesn't exist.
-						</Text>
-						<Link href="/" asChild>
-							<Button size="sm">Go Home</Button>
-						</Link>
-					</Surface>
-				</View>
-			</Container>
-		</>
+		<SafeAreaView className="flex-1 justify-center bg-background">
+			<EmptyState
+				icon="compass-outline"
+				title={t("common.notFoundTitle")}
+				body={t("common.notFoundBody")}
+				action={
+					<ActionButton
+						label={t("common.goHome")}
+						icon="home-outline"
+						onPress={() => router.replace("/")}
+					/>
+				}
+			/>
+		</SafeAreaView>
 	);
 }

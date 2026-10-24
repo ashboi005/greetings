@@ -29,14 +29,22 @@
 			"!**/convex/_generated",
 			"!**/src/migrations/meta",
 			"!**/google-services.json",
-			"!**/GoogleService-Info.plist"
+			"!**/GoogleService-Info.plist",
+			"!apps/native/android",
+			"!apps/native/ios"
 		]
 	},
 	"formatter": {
 		"enabled": true,
 		"indentStyle": "tab"
 	},
-	"assist": { "actions": { "source": { "organizeImports": "on" } } },
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
 	"linter": {
 		"enabled": true,
 		"rules": {
@@ -49,7 +57,11 @@
 					"level": "warn",
 					"fix": "safe",
 					"options": {
-						"functions": ["clsx", "cva", "cn"]
+						"functions": [
+							"clsx",
+							"cva",
+							"cn"
+						]
 					}
 				}
 			},
@@ -76,5 +88,19 @@
 		"parser": {
 			"tailwindDirectives": true
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": [
+				"apps/native/global.css"
+			],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noDuplicateCustomProperties": "off"
+					}
+				}
+			}
+		}
+	]
 }

@@ -29,8 +29,20 @@ import type { ExpoConfig } from "expo/config";
  */
 
 const PROJECT_ROOT = __dirname;
-const ANDROID_CONFIG = path.join(PROJECT_ROOT, "google-services.json");
-const IOS_CONFIG = path.join(PROJECT_ROOT, "GoogleService-Info.plist");
+
+/**
+ * Both Firebase files are gitignored, so an EAS build server never has them on
+ * disk. They are uploaded as EAS "file" environment variables instead, which
+ * EAS materialises somewhere on the build machine and exposes as an absolute
+ * path in these two variables. Locally the variables are unset and the files
+ * sitting in this directory are used. See docs/mobile-app.md §Building.
+ */
+const ANDROID_CONFIG =
+	process.env.GOOGLE_SERVICES_JSON ??
+	path.join(PROJECT_ROOT, "google-services.json");
+const IOS_CONFIG =
+	process.env.GOOGLE_SERVICE_INFO_PLIST ??
+	path.join(PROJECT_ROOT, "GoogleService-Info.plist");
 
 const BUNDLE_ID = "dev.ashwathsoni.greetings";
 
@@ -138,42 +150,166 @@ if (!googleWebClientId) {
 	);
 }
 
+/**
+ * AdMob *app* ids (the `~` ones). Google's sample app ids are the fallback:
+ * they are public, documented, and can only ever serve test ads, so a build
+ * without real ids is harmless rather than broken. The plugin refuses to run
+ * without some value, and AdMob's SDK crashes the app at launch on Android if
+ * the manifest entry is missing — so "unset" must never mean "omitted".
+ */
+const ADMOB_TEST_ANDROID_APP_ID = "ca-app-pub-3940256099942544~3347511713";
+const ADMOB_TEST_IOS_APP_ID = "ca-app-pub-3940256099942544~1458002511";
+
+const admobAndroidAppId =
+	process.env.ADMOB_ANDROID_APP_ID || ADMOB_TEST_ANDROID_APP_ID;
+const admobIosAppId = process.env.ADMOB_IOS_APP_ID || ADMOB_TEST_IOS_APP_ID;
+
+if (
+	admobAndroidAppId === ADMOB_TEST_ANDROID_APP_ID ||
+	admobIosAppId === ADMOB_TEST_IOS_APP_ID
+) {
+	console.warn(
+		"[greetings] AdMob is using Google's sample app ids, so only test ads " +
+			"will serve. Set ADMOB_ANDROID_APP_ID and ADMOB_IOS_APP_ID for a store " +
+			"build. See docs/mobile-app.md §Ads.",
+	);
+}
+
+const TRACKING_DESCRIPTION =
+	"Allow tracking to see ads that are more relevant to you. The app stays free either way.";
+
 const plugins: NonNullable<ExpoConfig["plugins"]> = [
 	"expo-font",
 	"expo-localization",
 	"expo-router",
 	"expo-secure-store",
 	"expo-asset",
+	"expo-dev-client",
 	"@react-native-firebase/app",
 	"@react-native-firebase/auth",
-	// Firebase's iOS SDK is distributed as static frameworks.
-	["expo-build-properties", { ios: { useFrameworks: "static" } }],
+	// Adds the Crashlytics Gradle plugin (uploads mapping files on release
+	// builds, so crash stacks are readable) and the iOS run script.
+	"@react-native-firebase/crashlytics",
+	[
+		"expo-build-properties",
+		{
+			ios: {
+				// Firebase's iOS SDK ships as static frameworks.
+				useFrameworks: "static",
+				// Under SDK 54's precompiled React Native, RNFB's pods fail with
+				// "include of non-modular header inside framework module" unless
+				// they are linked statically. Every RNFB module in package.json
+				// must be listed — adding one without listing it here breaks only
+				// the iOS build, and only on the build server.
+				forceStaticLinking: [
+					"RNFBApp",
+					"RNFBAuth",
+					"RNFBAnalytics",
+					"RNFBCrashlytics",
+				],
+			},
+		},
+	],
+	[
+		"expo-splash-screen",
+		{
+			image: "./assets/images/splash-icon.png",
+			imageWidth: 180,
+			resizeMode: "contain",
+			backgroundColor: "#FFF7ED",
+			dark: {
+				image: "./assets/images/splash-icon.png",
+				backgroundColor: "#1A1310",
+			},
+		},
+	],
+	[
+		"expo-image-picker",
+		{
+			photosPermission:
+				"Pick a photo or your logo to put on the greetings you share.",
+			// Library only. Declaring these would add camera and microphone
+			// permissions the app never uses, which both stores ask about.
+			cameraPermission: false,
+			microphonePermission: false,
+		},
+	],
+	[
+		"expo-media-library",
+		{
+			photosPermission: "Save greetings to your photos.",
+			savePhotosPermission: "Save greetings to your photos.",
+			isAccessMediaLocationEnabled: false,
+		},
+	],
+	[
+		"expo-tracking-transparency",
+		{ userTrackingPermission: TRACKING_DESCRIPTION },
+	],
+	[
+		"react-native-google-mobile-ads",
+		{
+			androidAppId: admobAndroidAppId,
+			iosAppId: admobIosAppId,
+			// Hold measurement until the consent flow in lib/ads/consent.ts has
+			// run; starting it at launch would collect before anyone agreed.
+			delayAppMeasurementInit: true,
+			userTrackingUsageDescription: TRACKING_DESCRIPTION,
+		},
+	],
 ];
 
 // Only registered when there is a scheme to give it — the plugin requires one,
 // and a placeholder would produce a build that fails at the redirect instead of
 // at config time.
 if (iosUrlScheme) {
-	plugins.splice(7, 0, [
-		"@react-native-google-signin/google-signin",
-		{ iosUrlScheme },
-	]);
+	plugins.push(["@react-native-google-signin/google-signin", { iosUrlScheme }]);
 }
 
 const config: ExpoConfig = {
-	name: "greetings",
+	name: "Greetings",
 	slug: "greetings",
 	scheme: "greetings",
+	version: "1.0.0",
 	userInterfaceStyle: "automatic",
-	orientation: "default",
-	web: { bundler: "metro" },
+	orientation: "portrait",
+	icon: "./assets/images/icon.png",
+	backgroundColor: "#FFF7ED",
+	web: { bundler: "metro", favicon: "./assets/images/favicon.png" },
 	ios: {
 		bundleIdentifier: BUNDLE_ID,
-		googleServicesFile: "./GoogleService-Info.plist",
+		googleServicesFile: IOS_CONFIG,
+		// Phone-first. iPad runs the iPhone layout, which keeps App Store review
+		// from demanding iPad screenshots for a layout nobody designed.
+		supportsTablet: false,
+		infoPlist: {
+			// HTTPS only, standard crypto only: no export-compliance paperwork.
+			ITSAppUsesNonExemptEncryption: false,
+		},
 	},
 	android: {
 		package: BUNDLE_ID,
-		googleServicesFile: "./google-services.json",
+		googleServicesFile: ANDROID_CONFIG,
+		adaptiveIcon: {
+			foregroundImage: "./assets/images/android-icon-foreground.png",
+			backgroundImage: "./assets/images/android-icon-background.png",
+			monochromeImage: "./assets/images/android-icon-monochrome.png",
+			backgroundColor: "#E8590C",
+		},
+		edgeToEdgeEnabled: true,
+		predictiveBackGestureEnabled: false,
+		// Declared by media/picker libraries and never needed: saving is
+		// write-only (MediaStore, plus WRITE_EXTERNAL_STORAGE on Android 9 and
+		// older, which is kept), and picking uses the system photo picker. The
+		// READ_MEDIA_* permissions would also put the app through Play's photo
+		// and video permissions declaration for no benefit.
+		blockedPermissions: [
+			"android.permission.RECORD_AUDIO",
+			"android.permission.READ_MEDIA_IMAGES",
+			"android.permission.READ_MEDIA_VIDEO",
+			"android.permission.READ_MEDIA_AUDIO",
+			"android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+		],
 	},
 	plugins,
 	experiments: {
@@ -184,7 +320,14 @@ const config: ExpoConfig = {
 		// Read by lib/firebase.ts through expo-constants. Not a secret — a public
 		// OAuth client identifier.
 		googleWebClientId,
+		// The EAS project (expo.dev/accounts/ashboi005/projects/greetings). Not a
+		// secret; overridable for a fork that builds under another account.
+		eas: {
+			projectId:
+				process.env.EAS_PROJECT_ID ?? "9484bd6a-fede-4697-8ed4-9f42aa879663",
+		},
 	},
+	owner: process.env.EAS_OWNER ?? "ashboi005",
 };
 
 export default config;

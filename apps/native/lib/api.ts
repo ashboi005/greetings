@@ -9,6 +9,9 @@ export const api = axios.create({
 	headers: {
 		"Content-Type": "application/json",
 	},
+	// Without a timeout a request on a dead mobile connection hangs forever and
+	// the spinner never stops. 20s is generous for 2G and short enough to retry.
+	timeout: 20_000,
 });
 
 api.interceptors.request.use(async (config) => {
